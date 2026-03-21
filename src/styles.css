@@ -115,18 +115,20 @@ code {
 
 .brand-mark {
   align-items: center;
-  background: linear-gradient(180deg, #f8fbff, #d7dfec);
+  background: linear-gradient(180deg, rgba(248, 251, 255, 0.12), rgba(215, 223, 236, 0.06));
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 18px;
-  color: #11161f;
   display: inline-flex;
-  font-family: 'Barlow Condensed', sans-serif;
-  font-size: 1.1rem;
-  font-weight: 700;
   height: 52px;
   justify-content: center;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  padding: 7px;
   width: 52px;
+}
+
+.brand-logo {
+  display: block;
+  height: 100%;
+  width: 100%;
 }
 
 .brand-copy {
@@ -248,7 +250,28 @@ code {
 }
 
 .sidebar-brand-block {
+  align-items: center;
+  display: flex;
+  gap: 12px;
   padding: 8px 10px 10px;
+}
+
+.sidebar-brand-mark {
+  align-items: center;
+  background: linear-gradient(180deg, rgba(248, 251, 255, 0.12), rgba(215, 223, 236, 0.05));
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 46px;
+  justify-content: center;
+  padding: 6px;
+  width: 46px;
+}
+
+.sidebar-brand-copy {
+  display: grid;
+  gap: 2px;
 }
 
 .sidebar-heading {
@@ -888,6 +911,25 @@ code {
   padding: 2rem;
   position: relative;
   z-index: 2;
+}
+
+.panel-logo-shell {
+  align-items: center;
+  background: linear-gradient(180deg, rgba(248, 251, 255, 0.08), rgba(215, 223, 236, 0.03));
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 22px;
+  display: inline-flex;
+  height: 72px;
+  justify-content: center;
+  margin-bottom: 16px;
+  padding: 8px;
+  width: 72px;
+}
+
+.panel-logo {
+  display: block;
+  height: 100%;
+  width: 100%;
 }
 
 .loading-panel h1,

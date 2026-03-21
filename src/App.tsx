@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { BrandLogo } from './components/BrandLogo';
 import { DetailPanel } from './components/DetailPanel';
 import { HeroSpotlight } from './components/HeroSpotlight';
 import { MatchList } from './components/MatchList';
@@ -41,11 +42,18 @@ export default function App() {
   const [loadingStreamMatchIds, setLoadingStreamMatchIds] = useState<Record<string, boolean>>({});
   const [streamLookupDoneByMatchId, setStreamLookupDoneByMatchId] = useState<Record<string, boolean>>({});
   const catalogRef = useRef(catalog);
+  const screenRef = useRef(screen);
   const catalogRequestInFlightRef = useRef(false);
+  const selectedSportIdRef = useRef('');
+  const selectedMatchIdRef = useRef('');
 
   useEffect(() => {
     catalogRef.current = catalog;
   }, [catalog]);
+
+  useEffect(() => {
+    screenRef.current = screen;
+  }, [screen]);
 
   const sports = catalog.sports;
   const selectedSport = sports[selectedSportIndex] || sports[0];
@@ -70,6 +78,14 @@ export default function App() {
     ? { ...selectedMatch, streams: selectedMatchStreams }
     : null;
   const selectedStream = selectedMatchStreams[selectedStreamIndex] || selectedMatchStreams[0] || null;
+
+  useEffect(() => {
+    selectedSportIdRef.current = selectedSport?.id || '';
+  }, [selectedSport?.id]);
+
+  useEffect(() => {
+    selectedMatchIdRef.current = selectedMatch?.id || '';
+  }, [selectedMatch?.id]);
 
   const accentBySport = useMemo(
     () =>
@@ -102,8 +118,9 @@ export default function App() {
           setCatalog(nextCatalog);
           setError('');
 
-          const nextSportIndex = selectedSport
-            ? nextCatalog.sports.findIndex((sport) => sport.id === selectedSport.id)
+          const nextSportId = selectedSportIdRef.current;
+          const nextSportIndex = nextSportId
+            ? nextCatalog.sports.findIndex((sport) => sport.id === nextSportId)
             : 0;
           const resolvedSportIndex = clampIndex(
             nextSportIndex >= 0 ? nextSportIndex : 0,
@@ -115,8 +132,9 @@ export default function App() {
             !nextSelectedSport || nextSelectedSport.id === 'all'
               ? nextCatalog.matches
               : nextCatalog.matches.filter((match) => match.sportId === nextSelectedSport.id);
-          const nextMatchIndex = selectedMatch
-            ? nextFilteredMatches.findIndex((match) => match.id === selectedMatch.id)
+          const nextMatchId = selectedMatchIdRef.current;
+          const nextMatchIndex = nextMatchId
+            ? nextFilteredMatches.findIndex((match) => match.id === nextMatchId)
             : 0;
 
           setSelectedSportIndex(resolvedSportIndex);
@@ -141,7 +159,7 @@ export default function App() {
     };
 
     const handleForegroundRefresh = () => {
-      if (document.visibilityState === 'visible') {
+      if (document.visibilityState === 'visible' && screenRef.current !== 'player') {
         void refreshCatalog();
       }
     };
@@ -149,7 +167,7 @@ export default function App() {
     void refreshCatalog({ showLoading: true });
 
     const intervalId = window.setInterval(() => {
-      if (document.visibilityState !== 'visible' || screen === 'player') {
+      if (document.visibilityState !== 'visible' || screenRef.current === 'player') {
         return;
       }
 
@@ -165,7 +183,7 @@ export default function App() {
       window.removeEventListener('focus', handleForegroundRefresh);
       document.removeEventListener('visibilitychange', handleForegroundRefresh);
     };
-  }, [screen, selectedMatch, selectedSport]);
+  }, []);
 
   useEffect(() => {
     setSelectedMatchIndex((current) => clampIndex(current, filteredMatches.length));
@@ -395,6 +413,9 @@ export default function App() {
     return (
       <div className="app-shell">
         <div className="panel loading-panel">
+          <span className="panel-logo-shell">
+            <BrandLogo className="panel-logo" />
+          </span>
           <span className="panel-kicker">sportzx</span>
           <h1>Loading your sports desk</h1>
           <p>Refreshing the live sports catalog.</p>
@@ -440,7 +461,9 @@ export default function App() {
       {screen !== 'player' ? (
         <header className="app-header">
           <div className="brand-lockup">
-            <span className="brand-mark">PA</span>
+            <span className="brand-mark">
+              <BrandLogo className="brand-logo" />
+            </span>
             <div className="brand-copy">
               <span className="brand-subtitle">Private Source Sports</span>
               <h1 className="brand-title">sportzx</h1>

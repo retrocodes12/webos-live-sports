@@ -1,3 +1,4 @@
+import { BrandLogo } from './BrandLogo';
 import type { SportCategory } from '../types';
 
 interface SportsColumnProps {
@@ -17,8 +18,13 @@ export function SportsColumn({
     <aside className="sidebar-rail">
       <div className="sidebar-surface">
         <div className="sidebar-brand-block">
-          <span className="sidebar-caption">Sports TV</span>
-          <h2 className="sidebar-heading">sportzx</h2>
+          <span className="sidebar-brand-mark">
+            <BrandLogo className="brand-logo" />
+          </span>
+          <div className="sidebar-brand-copy">
+            <span className="sidebar-caption">Sports TV</span>
+            <h2 className="sidebar-heading">sportzx</h2>
+          </div>
         </div>
         <div className="sidebar-list">
         {sports.map((sport, index) => {
