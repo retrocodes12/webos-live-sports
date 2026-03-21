@@ -9,7 +9,7 @@ services:
       - key: NODE_ENV
         value: production
       - key: PRIVATE_SITE_BASE_URL
-        sync: false
+        value: https://totalsportek.army/
       - key: UPSTREAM_CATALOG_URL
         sync: false
       - key: UPSTREAM_AUTH_BEARER
@@ -27,59 +27,59 @@ services:
       - key: STREAM_RESOLVER_AUTH_HEADER_VALUE
         sync: false
       - key: PRIVATE_SITE_SEARCH_URL_TEMPLATE
-        sync: false
+        value: ""
       - key: PRIVATE_SITE_MATCH_LINK_SELECTOR
-        sync: false
+        value: a[href*="/game/"]
       - key: PRIVATE_SITE_CATALOG_CARD_SELECTOR
-        sync: false
+        value: a.text-decoration-none.nav-link2[href*="/game/"]
       - key: PRIVATE_SITE_CATALOG_LINK_SELECTOR
-        sync: false
+        value: ""
       - key: PRIVATE_SITE_CATALOG_TITLE_SELECTOR
-        sync: false
+        value: ""
       - key: PRIVATE_SITE_CATALOG_LEAGUE_SELECTOR
-        sync: false
+        value: div.col.fs-7.fw-bold.text-white.m-2 .ps-3
       - key: PRIVATE_SITE_CATALOG_ROUND_SELECTOR
-        sync: false
+        value: ""
       - key: PRIVATE_SITE_CATALOG_VENUE_SELECTOR
-        sync: false
+        value: ""
       - key: PRIVATE_SITE_CATALOG_KICKOFF_SELECTOR
-        sync: false
+        value: ""
       - key: PRIVATE_SITE_CATALOG_STATUS_SELECTOR
-        sync: false
+        value: div[class*="Aj"] span
       - key: PRIVATE_SITE_CATALOG_SCORE_SELECTOR
-        sync: false
+        value: ""
       - key: PRIVATE_SITE_CATALOG_SUMMARY_SELECTOR
-        sync: false
+        value: ""
       - key: PRIVATE_SITE_DEFAULT_SPORT_ID
-        sync: false
+        value: sports
       - key: PRIVATE_SITE_DEFAULT_SPORT_NAME
-        sync: false
+        value: Live Sports
       - key: PRIVATE_SITE_DEFAULT_SPORT_ACCENT
-        sync: false
+        value: "#22c55e"
       - key: PRIVATE_SITE_DEFAULT_SPORT_SHORT_LABEL
-        sync: false
+        value: LIVE
       - key: PRIVATE_SITE_DEFAULT_LEAGUE
-        sync: false
+        value: Live Streams
       - key: PRIVATE_SITE_CATALOG_LIMIT
-        sync: false
+        value: "24"
       - key: PRIVATE_SITE_PROVIDER_LINK_SELECTOR
-        sync: false
+        value: .data-row a.nocolor[href]
       - key: PRIVATE_SITE_STREAM_LINK_SELECTOR
-        sync: false
+        value: a[href], iframe[src], source[src], video[src]
       - key: PRIVATE_SITE_FINAL_STREAM_SELECTOR
-        sync: false
+        value: source[src], video[src], a[href*=".m3u8"], a[href*=".mpd"], a[href*=".mp4"]
       - key: PRIVATE_SITE_FINAL_EMBED_SELECTOR
-        sync: false
+        value: iframe[src]
       - key: PRIVATE_SITE_RESOLVE_PROVIDER_PAGES
-        sync: false
+        value: "true"
       - key: PRIVATE_SITE_FALLBACK_TO_PAGE_EMBED
-        sync: false
+        value: "true"
       - key: PRIVATE_SITE_MAX_EMBED_DEPTH
-        sync: false
+        value: "3"
       - key: PRIVATE_SITE_FETCH_RETRIES
-        sync: false
+        value: "2"
       - key: PRIVATE_SITE_MAX_PROVIDER_CANDIDATES
-        sync: false
+        value: "12"
       - key: CATALOG_CACHE_TTL_MS
         sync: false
       - key: STREAM_CACHE_TTL_MS
@@ -87,4 +87,4 @@ services:
       - key: STREAM_RESOLVE_RETRIES
         sync: false
       - key: UPSTREAM_TIMEOUT_MS
-        sync: false
+        value: "12000"
