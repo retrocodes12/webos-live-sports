@@ -74,6 +74,10 @@ const PRIVATE_SITE_PROVIDER_FETCH_TIMEOUT_MS = Math.max(
   1000,
   Number(process.env.PRIVATE_SITE_PROVIDER_FETCH_TIMEOUT_MS || 5000)
 );
+const PRIVATE_SITE_DETAIL_PAGE_FETCH_TIMEOUT_MS = Math.max(
+  1000,
+  Number(process.env.PRIVATE_SITE_DETAIL_PAGE_FETCH_TIMEOUT_MS || 5000)
+);
 
 function buildHeaders() {
   const headers = {
@@ -163,10 +167,10 @@ function normalizeStreams(payload) {
     .filter(Boolean);
 }
 
-async function fetchHtml(url, timeoutMs) {
+async function fetchHtml(url, timeoutMs, maxRetries = PRIVATE_SITE_FETCH_RETRIES) {
   let lastError = null;
 
-  for (let attempt = 0; attempt <= PRIVATE_SITE_FETCH_RETRIES; attempt += 1) {
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -183,7 +187,7 @@ async function fetchHtml(url, timeoutMs) {
       return await response.text();
     } catch (error) {
       lastError = error;
-      if (attempt >= PRIVATE_SITE_FETCH_RETRIES) {
+      if (attempt >= maxRetries) {
         throw error;
       }
       await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
@@ -807,7 +811,7 @@ async function resolvePlayableCandidatesFromDocument(
       const nestedGroups = await Promise.all(
         embeds.map(async (embedCandidate) => {
           try {
-            const nestedHtml = await fetchHtml(embedCandidate.url, timeoutMs);
+            const nestedHtml = await fetchHtml(embedCandidate.url, timeoutMs, 0);
             const nestedCandidates = await resolvePlayableCandidatesFromDocument(
               nestedHtml,
               embedCandidate.url,
@@ -880,7 +884,7 @@ async function resolveProviderChoices(matchPageHtml, matchPageUrl, timeoutMs) {
   const resolvedGroups = await Promise.all(
     providerCandidatesToResolve.map(async (providerCandidate) => {
       try {
-        const providerHtml = await fetchHtml(providerCandidate.url, providerFetchTimeoutMs);
+        const providerHtml = await fetchHtml(providerCandidate.url, providerFetchTimeoutMs, 0);
         const playableCandidates = await resolvePlayableCandidatesFromDocument(
           providerHtml,
           providerCandidate.url,
@@ -939,8 +943,39 @@ async function resolveFromWebsite(match, resolverQuery, timeoutMs) {
     throw new Error('Could not locate a matching event page on the private website');
   }
 
-  const matchPageHtml = await fetchHtml(candidatePageUrl, timeoutMs);
-  return resolveProviderChoices(matchPageHtml, candidatePageUrl, timeoutMs);
+  const detailPageFetchTimeoutMs = Math.max(
+    1000,
+    Math.min(timeoutMs, PRIVATE_SITE_DETAIL_PAGE_FETCH_TIMEOUT_MS)
+  );
+
+  try {
+    const matchPageHtml = await fetchHtml(candidatePageUrl, detailPageFetchTimeoutMs, 0);
+    const resolvedStreams = await resolveProviderChoices(
+      matchPageHtml,
+      candidatePageUrl,
+      detailPageFetchTimeoutMs
+    );
+
+    if (resolvedStreams.length > 0) {
+      return resolvedStreams;
+    }
+  } catch {
+    if (!PRIVATE_SITE_FALLBACK_TO_PAGE_EMBED) {
+      throw new Error('Could not resolve streams from the private website');
+    }
+  }
+
+  return normalizeStreams([
+    {
+      id: `match-page-${match.id || '1'}`,
+      label: 'Match Page',
+      provider: inferProviderName(candidatePageUrl),
+      quality: 'Auto',
+      language: 'English',
+      type: 'embed',
+      url: candidatePageUrl,
+    },
+  ]);
 }
 
 export async function loadPrivateCatalog({ timeoutMs }) {
