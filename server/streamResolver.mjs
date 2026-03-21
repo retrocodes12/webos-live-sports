@@ -1,3 +1,5 @@
+import { loadPrivateResolverModule } from './privateResolver.mjs';
+
 function buildResolverHeaders() {
   const headers = {
     Accept: 'application/json',
@@ -86,29 +88,23 @@ function normalizeStreamList(streams) {
 }
 
 export async function resolveStreamsForMatch(match, timeoutMs) {
-  try {
-    const privateResolverModule = await import('./privateResolver.local.mjs');
-    if (typeof privateResolverModule.resolvePrivateStreams === 'function') {
-      return await privateResolverModule.resolvePrivateStreams({
-        match: {
-          id: match.id,
-          sportId: match.sportId,
-          league: match.league,
-          round: match.round,
-          title: match.title,
-          homeTeam: match.homeTeam,
-          awayTeam: match.awayTeam,
-          status: match.status,
-          kickoffLabel: match.kickoffLabel,
-        },
-        resolverQuery: match.resolverQuery || null,
-        timeoutMs,
-      });
-    }
-  } catch (error) {
-    if (!(error instanceof Error) || !error.message.includes('Cannot find module')) {
-      throw error;
-    }
+  const { module: privateResolverModule } = await loadPrivateResolverModule();
+  if (typeof privateResolverModule.resolvePrivateStreams === 'function') {
+    return await privateResolverModule.resolvePrivateStreams({
+      match: {
+        id: match.id,
+        sportId: match.sportId,
+        league: match.league,
+        round: match.round,
+        title: match.title,
+        homeTeam: match.homeTeam,
+        awayTeam: match.awayTeam,
+        status: match.status,
+        kickoffLabel: match.kickoffLabel,
+      },
+      resolverQuery: match.resolverQuery || null,
+      timeoutMs,
+    });
   }
 
   const resolverUrl = String(process.env.STREAM_RESOLVER_URL || '').trim();

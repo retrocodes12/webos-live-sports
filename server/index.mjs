@@ -6,6 +6,7 @@ import { adaptCatalogPayload } from './catalogAdapter.mjs';
 import { demoSourceCatalog, getDemoSourceResponse } from './demoSource.mjs';
 import { loadProjectEnv } from './loadEnv.mjs';
 import { manualCatalogSource } from './manualCatalog.mjs';
+import { loadPrivateResolverModule } from './privateResolver.mjs';
 import { resolveStreamsForMatch } from './streamResolver.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -82,15 +83,9 @@ function buildUpstreamHeaders() {
 
 async function fetchUpstreamCatalog() {
   if (!upstreamCatalogUrl) {
-    try {
-      const privateResolverModule = await import('./privateResolver.local.mjs');
-      if (typeof privateResolverModule.loadPrivateCatalog === 'function') {
-        return await privateResolverModule.loadPrivateCatalog({ timeoutMs: upstreamTimeoutMs });
-      }
-    } catch (error) {
-      if (!(error instanceof Error) || !error.message.includes('Cannot find module')) {
-        throw error;
-      }
+    const { module: privateResolverModule } = await loadPrivateResolverModule();
+    if (typeof privateResolverModule.loadPrivateCatalog === 'function') {
+      return await privateResolverModule.loadPrivateCatalog({ timeoutMs: upstreamTimeoutMs });
     }
 
     if (String(process.env.PRIVATE_SITE_BASE_URL || '').trim().includes('/demo-source/')) {
@@ -210,6 +205,7 @@ const server = createServer(async (request, response) => {
     sendJson(response, 200, {
       ok: true,
       upstreamConfigured: Boolean(upstreamCatalogUrl),
+      privateSiteConfigured: Boolean(String(process.env.PRIVATE_SITE_BASE_URL || '').trim()),
       resolverConfigured: Boolean(process.env.STREAM_RESOLVER_URL),
     });
     return;
