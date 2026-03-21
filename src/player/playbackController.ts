@@ -1,6 +1,3 @@
-import * as dashjs from 'dashjs';
-import Hls from 'hls.js';
-
 import type { StreamOption } from '../types';
 
 export type PlaybackEngineName =
@@ -21,12 +18,41 @@ interface ManagedPlaybackSession {
   destroy: () => void;
 }
 
+type HlsModule = typeof import('hls.js');
+type DashJsModule = typeof import('dashjs');
+
 const HLS_MIME_TYPES = new Set([
   'application/vnd.apple.mpegurl',
   'application/x-mpegurl',
   'audio/mpegurl',
   'audio/x-mpegurl',
 ]);
+let hlsModulePromise: Promise<HlsModule> | null = null;
+let dashModulePromise: Promise<DashJsModule> | null = null;
+
+function loadHlsModule() {
+  if (!hlsModulePromise) {
+    hlsModulePromise = import('hls.js');
+  }
+  return hlsModulePromise;
+}
+
+function loadDashModule() {
+  if (!dashModulePromise) {
+    dashModulePromise = import('dashjs');
+  }
+  return dashModulePromise;
+}
+
+function getDashRuntime(module: DashJsModule) {
+  const candidate = (
+    module as DashJsModule & {
+      default?: DashJsModule;
+    }
+  ).default;
+
+  return candidate || module;
+}
 
 function normalizeMimeType(mimeType?: string | null) {
   return String(mimeType || '')
@@ -244,15 +270,6 @@ function attachDashRequestHeaders(player: any, headers: Record<string, string> =
   );
 }
 
-function canUseDashJs() {
-  try {
-    const factory = dashjs?.MediaPlayer;
-    return typeof factory === 'function' && Boolean(factory().create);
-  } catch {
-    return false;
-  }
-}
-
 function getEngineCandidates(
   videoElement: HTMLVideoElement,
   stream: StreamOption
@@ -271,9 +288,7 @@ function getEngineCandidates(
     if (nativeCandidatesAllowed && canPlayNatively(videoElement, 'application/vnd.apple.mpegurl')) {
       pushCandidate('native-hls');
     }
-    if (Hls.isSupported()) {
-      pushCandidate('hls.js');
-    }
+    pushCandidate('hls.js');
     if (nativeCandidatesAllowed) {
       pushCandidate('native-file');
     }
@@ -284,9 +299,7 @@ function getEngineCandidates(
     if (nativeCandidatesAllowed && canPlayNatively(videoElement, 'application/dash+xml')) {
       pushCandidate('native-dash');
     }
-    if (canUseDashJs()) {
-      pushCandidate('dash.js');
-    }
+    pushCandidate('dash.js');
     if (nativeCandidatesAllowed) {
       pushCandidate('native-file');
     }
@@ -297,11 +310,16 @@ function getEngineCandidates(
   return candidates;
 }
 
-function startWithHlsJs(
+async function startWithHlsJs(
   videoElement: HTMLVideoElement,
   stream: StreamOption,
   onPlaybackError?: (message: string) => void
 ) {
+  const { default: Hls } = await loadHlsModule();
+  if (typeof Hls !== 'function' || !Hls.isSupported()) {
+    throw new Error('HLS.js is not supported in this runtime.');
+  }
+
   const hls = new Hls(buildHlsConfig(stream.headers || {}));
 
   const handleFatalError = (_event: string, data: { fatal?: boolean; details?: string } = {}) => {
@@ -324,15 +342,21 @@ function startWithHlsJs(
   };
 }
 
-function startWithDashJs(
+async function startWithDashJs(
   videoElement: HTMLVideoElement,
   stream: StreamOption,
   onPlaybackError?: (message: string) => void
 ) {
-  const player = dashjs.MediaPlayer().create();
+  const dashRuntime = getDashRuntime(await loadDashModule());
+  const factory = dashRuntime?.MediaPlayer;
+  if (typeof factory !== 'function') {
+    throw new Error('DASH.js is not available in this runtime.');
+  }
+
+  const player = factory().create();
   attachDashRequestHeaders(player, stream.headers || {});
 
-  const dashEvents = dashjs.MediaPlayer.events as unknown as Record<string, string> | undefined;
+  const dashEvents = factory.events as unknown as Record<string, string> | undefined;
   const errorEvent = dashEvents?.ERROR;
   const readyEvent = dashEvents?.STREAM_INITIALIZED || dashEvents?.PLAYBACK_METADATA_LOADED;
 
@@ -379,7 +403,7 @@ function startWithNativeEngine(
   };
 }
 
-function startWithEngine(
+async function startWithEngine(
   engine: PlaybackEngineName,
   videoElement: HTMLVideoElement,
   stream: StreamOption,
@@ -421,6 +445,11 @@ export function startManagedPlayback({
   onEngineChange,
   onPlaybackError,
 }: StartManagedPlaybackOptions): ManagedPlaybackSession {
+  let destroyed = false;
+  let destroyPlayback = () => {
+    clearVideoElement(videoElement);
+  };
+
   if (stream.drm) {
     onPlaybackError?.(
       'This stream is DRM protected. The current web player does not yet include a platform DRM playback path.'
@@ -442,10 +471,36 @@ export function startManagedPlayback({
     };
   }
 
-  const engine = candidates[0];
-  onEngineChange?.(engine);
+  void (async () => {
+    let lastError: Error | null = null;
+
+    for (const engine of candidates) {
+      if (destroyed) {
+        return;
+      }
+
+      onEngineChange?.(engine);
+
+      try {
+        destroyPlayback = await startWithEngine(engine, videoElement, stream, onPlaybackError);
+        if (destroyed) {
+          destroyPlayback();
+        }
+        return;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error('Playback engine startup failed.');
+      }
+    }
+
+    if (!destroyed) {
+      onPlaybackError?.(lastError?.message || 'No compatible playback engine was available for this stream.');
+    }
+  })();
 
   return {
-    destroy: startWithEngine(engine, videoElement, stream, onPlaybackError),
+    destroy: () => {
+      destroyed = true;
+      destroyPlayback();
+    },
   };
 }

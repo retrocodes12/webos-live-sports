@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { DetailPanel } from './components/DetailPanel';
 import { HeroSpotlight } from './components/HeroSpotlight';
@@ -16,6 +16,7 @@ const EMPTY_CATALOG: SportsCatalog = {
   sports: [],
   matches: [],
 };
+const CATALOG_REFRESH_INTERVAL_MS = 30000;
 
 function clampIndex(value: number, length: number) {
   if (length <= 0) {
@@ -39,34 +40,12 @@ export default function App() {
   const [streamErrorsByMatchId, setStreamErrorsByMatchId] = useState<Record<string, string>>({});
   const [loadingStreamMatchIds, setLoadingStreamMatchIds] = useState<Record<string, boolean>>({});
   const [streamLookupDoneByMatchId, setStreamLookupDoneByMatchId] = useState<Record<string, boolean>>({});
+  const catalogRef = useRef(catalog);
+  const catalogRequestInFlightRef = useRef(false);
 
   useEffect(() => {
-    let cancelled = false;
-
-    const run = async () => {
-      try {
-        setLoading(true);
-        setError('');
-        const nextCatalog = await loadSportsCatalog();
-        if (!cancelled) {
-          setCatalog(nextCatalog);
-        }
-      } catch (nextError) {
-        if (!cancelled) {
-          setError(nextError instanceof Error ? nextError.message : 'Failed to load sports catalog');
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    };
-
-    void run();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    catalogRef.current = catalog;
+  }, [catalog]);
 
   const sports = catalog.sports;
   const selectedSport = sports[selectedSportIndex] || sports[0];
@@ -101,6 +80,92 @@ export default function App() {
     [sports]
   );
   const selectedAccent = selectedMatch ? accentBySport[selectedMatch.sportId] || '#6f7cff' : '#6f7cff';
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const refreshCatalog = async ({ showLoading = false } = {}) => {
+      if (catalogRequestInFlightRef.current) {
+        return;
+      }
+
+      catalogRequestInFlightRef.current = true;
+
+      try {
+        if (showLoading) {
+          setLoading(true);
+          setError('');
+        }
+
+        const nextCatalog = await loadSportsCatalog();
+        if (!cancelled) {
+          setCatalog(nextCatalog);
+          setError('');
+
+          const nextSportIndex = selectedSport
+            ? nextCatalog.sports.findIndex((sport) => sport.id === selectedSport.id)
+            : 0;
+          const resolvedSportIndex = clampIndex(
+            nextSportIndex >= 0 ? nextSportIndex : 0,
+            nextCatalog.sports.length
+          );
+          const nextSelectedSport =
+            nextCatalog.sports[resolvedSportIndex] || nextCatalog.sports[0];
+          const nextFilteredMatches =
+            !nextSelectedSport || nextSelectedSport.id === 'all'
+              ? nextCatalog.matches
+              : nextCatalog.matches.filter((match) => match.sportId === nextSelectedSport.id);
+          const nextMatchIndex = selectedMatch
+            ? nextFilteredMatches.findIndex((match) => match.id === selectedMatch.id)
+            : 0;
+
+          setSelectedSportIndex(resolvedSportIndex);
+          setSelectedMatchIndex(
+            clampIndex(nextMatchIndex >= 0 ? nextMatchIndex : 0, nextFilteredMatches.length)
+          );
+        }
+      } catch (nextError) {
+        if (
+          !cancelled &&
+          !catalogRef.current.sports.length &&
+          !catalogRef.current.matches.length
+        ) {
+          setError(nextError instanceof Error ? nextError.message : 'Failed to load sports catalog');
+        }
+      } finally {
+        catalogRequestInFlightRef.current = false;
+        if (!cancelled && showLoading) {
+          setLoading(false);
+        }
+      }
+    };
+
+    const handleForegroundRefresh = () => {
+      if (document.visibilityState === 'visible') {
+        void refreshCatalog();
+      }
+    };
+
+    void refreshCatalog({ showLoading: true });
+
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState !== 'visible' || screen === 'player') {
+        return;
+      }
+
+      void refreshCatalog();
+    }, CATALOG_REFRESH_INTERVAL_MS);
+
+    window.addEventListener('focus', handleForegroundRefresh);
+    document.addEventListener('visibilitychange', handleForegroundRefresh);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', handleForegroundRefresh);
+      document.removeEventListener('visibilitychange', handleForegroundRefresh);
+    };
+  }, [screen, selectedMatch, selectedSport]);
 
   useEffect(() => {
     setSelectedMatchIndex((current) => clampIndex(current, filteredMatches.length));
@@ -332,7 +397,7 @@ export default function App() {
         <div className="panel loading-panel">
           <span className="panel-kicker">sportzx</span>
           <h1>Loading your sports desk</h1>
-          <p>Preparing the local demo catalog and player lanes.</p>
+          <p>Refreshing the live sports catalog.</p>
         </div>
       </div>
     );
