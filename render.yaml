@@ -80,11 +80,17 @@ services:
         value: "2"
       - key: PRIVATE_SITE_MAX_PROVIDER_CANDIDATES
         value: "12"
+      - key: PRIVATE_SITE_PROVIDER_RESOLVE_LIMIT
+        value: "2"
+      - key: PRIVATE_SITE_PROVIDER_FETCH_TIMEOUT_MS
+        value: "2500"
+      - key: PRIVATE_SITE_DETAIL_PAGE_FETCH_TIMEOUT_MS
+        value: "3000"
       - key: CATALOG_CACHE_TTL_MS
         value: "30000"
       - key: STREAM_CACHE_TTL_MS
         sync: false
       - key: STREAM_RESOLVE_RETRIES
-        sync: false
+        value: "0"
       - key: UPSTREAM_TIMEOUT_MS
         value: "12000"
