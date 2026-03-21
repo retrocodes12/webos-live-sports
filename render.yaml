@@ -1,0 +1,90 @@
+services:
+  - type: web
+    name: sportzx-api
+    runtime: docker
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PRIVATE_SITE_BASE_URL
+        sync: false
+      - key: UPSTREAM_CATALOG_URL
+        sync: false
+      - key: UPSTREAM_AUTH_BEARER
+        sync: false
+      - key: UPSTREAM_AUTH_HEADER_NAME
+        sync: false
+      - key: UPSTREAM_AUTH_HEADER_VALUE
+        sync: false
+      - key: STREAM_RESOLVER_URL
+        sync: false
+      - key: STREAM_RESOLVER_AUTH_BEARER
+        sync: false
+      - key: STREAM_RESOLVER_AUTH_HEADER_NAME
+        sync: false
+      - key: STREAM_RESOLVER_AUTH_HEADER_VALUE
+        sync: false
+      - key: PRIVATE_SITE_SEARCH_URL_TEMPLATE
+        sync: false
+      - key: PRIVATE_SITE_MATCH_LINK_SELECTOR
+        sync: false
+      - key: PRIVATE_SITE_CATALOG_CARD_SELECTOR
+        sync: false
+      - key: PRIVATE_SITE_CATALOG_LINK_SELECTOR
+        sync: false
+      - key: PRIVATE_SITE_CATALOG_TITLE_SELECTOR
+        sync: false
+      - key: PRIVATE_SITE_CATALOG_LEAGUE_SELECTOR
+        sync: false
+      - key: PRIVATE_SITE_CATALOG_ROUND_SELECTOR
+        sync: false
+      - key: PRIVATE_SITE_CATALOG_VENUE_SELECTOR
+        sync: false
+      - key: PRIVATE_SITE_CATALOG_KICKOFF_SELECTOR
+        sync: false
+      - key: PRIVATE_SITE_CATALOG_STATUS_SELECTOR
+        sync: false
+      - key: PRIVATE_SITE_CATALOG_SCORE_SELECTOR
+        sync: false
+      - key: PRIVATE_SITE_CATALOG_SUMMARY_SELECTOR
+        sync: false
+      - key: PRIVATE_SITE_DEFAULT_SPORT_ID
+        sync: false
+      - key: PRIVATE_SITE_DEFAULT_SPORT_NAME
+        sync: false
+      - key: PRIVATE_SITE_DEFAULT_SPORT_ACCENT
+        sync: false
+      - key: PRIVATE_SITE_DEFAULT_SPORT_SHORT_LABEL
+        sync: false
+      - key: PRIVATE_SITE_DEFAULT_LEAGUE
+        sync: false
+      - key: PRIVATE_SITE_CATALOG_LIMIT
+        sync: false
+      - key: PRIVATE_SITE_PROVIDER_LINK_SELECTOR
+        sync: false
+      - key: PRIVATE_SITE_STREAM_LINK_SELECTOR
+        sync: false
+      - key: PRIVATE_SITE_FINAL_STREAM_SELECTOR
+        sync: false
+      - key: PRIVATE_SITE_FINAL_EMBED_SELECTOR
+        sync: false
+      - key: PRIVATE_SITE_RESOLVE_PROVIDER_PAGES
+        sync: false
+      - key: PRIVATE_SITE_FALLBACK_TO_PAGE_EMBED
+        sync: false
+      - key: PRIVATE_SITE_MAX_EMBED_DEPTH
+        sync: false
+      - key: PRIVATE_SITE_FETCH_RETRIES
+        sync: false
+      - key: PRIVATE_SITE_MAX_PROVIDER_CANDIDATES
+        sync: false
+      - key: CATALOG_CACHE_TTL_MS
+        sync: false
+      - key: STREAM_CACHE_TTL_MS
+        sync: false
+      - key: STREAM_RESOLVE_RETRIES
+        sync: false
+      - key: UPSTREAM_TIMEOUT_MS
+        sync: false

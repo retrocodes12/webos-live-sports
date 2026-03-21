@@ -1,0 +1,13 @@
+node_modules
+dist
+dist-webos
+.git
+.gitignore
+*.ipk
+src
+public
+webos
+tsconfig*.json
+vite.config.*
+README.md
+.env.local

@@ -1,0 +1,11 @@
+node_modules
+dist
+dist-webos
+*.ipk
+.DS_Store
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+.env
+.env.local
+server/privateResolver.local.mjs
