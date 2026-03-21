@@ -66,6 +66,14 @@ const PRIVATE_SITE_MAX_PROVIDER_CANDIDATES = Math.max(
   1,
   Number(process.env.PRIVATE_SITE_MAX_PROVIDER_CANDIDATES || 12)
 );
+const PRIVATE_SITE_PROVIDER_RESOLVE_LIMIT = Math.max(
+  1,
+  Number(process.env.PRIVATE_SITE_PROVIDER_RESOLVE_LIMIT || 4)
+);
+const PRIVATE_SITE_PROVIDER_FETCH_TIMEOUT_MS = Math.max(
+  1000,
+  Number(process.env.PRIVATE_SITE_PROVIDER_FETCH_TIMEOUT_MS || 5000)
+);
 
 function buildHeaders() {
   const headers = {
@@ -863,14 +871,20 @@ async function resolveProviderChoices(matchPageHtml, matchPageUrl, timeoutMs) {
     return normalizeStreams(providerCandidates);
   }
 
+  const providerCandidatesToResolve = providerCandidates.slice(0, PRIVATE_SITE_PROVIDER_RESOLVE_LIMIT);
+  const providerFetchTimeoutMs = Math.max(
+    1000,
+    Math.min(timeoutMs, PRIVATE_SITE_PROVIDER_FETCH_TIMEOUT_MS)
+  );
+
   const resolvedGroups = await Promise.all(
-    providerCandidates.map(async (providerCandidate) => {
+    providerCandidatesToResolve.map(async (providerCandidate) => {
       try {
-        const providerHtml = await fetchHtml(providerCandidate.url, timeoutMs);
+        const providerHtml = await fetchHtml(providerCandidate.url, providerFetchTimeoutMs);
         const playableCandidates = await resolvePlayableCandidatesFromDocument(
           providerHtml,
           providerCandidate.url,
-          timeoutMs
+          providerFetchTimeoutMs
         );
 
         if (playableCandidates.length === 0) {
@@ -898,7 +912,12 @@ async function resolveProviderChoices(matchPageHtml, matchPageUrl, timeoutMs) {
     })
   );
 
-  return normalizeStreams(resolvedGroups.flat());
+  const resolvedStreams = normalizeStreams(resolvedGroups.flat());
+  if (resolvedStreams.length > 0) {
+    return resolvedStreams;
+  }
+
+  return normalizeStreams(providerCandidates);
 }
 
 async function resolveFromWebsite(match, resolverQuery, timeoutMs) {
