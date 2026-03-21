@@ -3,6 +3,8 @@ import type { SportsCatalog, StreamOption } from '../types';
 
 const apiBaseUrl = import.meta.env.VITE_SPORTS_API_BASE_URL?.trim();
 const streamRequestRetries = 2;
+const catalogRequestTimeoutMs = 9000;
+const streamRequestTimeoutMs = 10000;
 
 async function delay(ms: number) {
   await new Promise((resolve) => {
@@ -39,23 +41,41 @@ function normalizeStreamList(payload: unknown): StreamOption[] {
   throw new Error('Invalid stream list payload');
 }
 
+async function fetchJson(endpoint: string, timeoutMs: number) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(endpoint, {
+      cache: 'no-store',
+      headers: {
+        Accept: 'application/json',
+      },
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Request failed with status ${response.status}`);
+    }
+
+    return response.json();
+  } catch (error) {
+    if ((error as { name?: string })?.name === 'AbortError') {
+      throw new Error('Request timed out');
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
 export async function loadSportsCatalog(): Promise<SportsCatalog> {
   if (!apiBaseUrl) {
     return mockCatalog;
   }
 
   const endpoint = new URL('/catalog', apiBaseUrl).toString();
-  const response = await fetch(endpoint, {
-    headers: {
-      Accept: 'application/json',
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Catalog request failed with status ${response.status}`);
-  }
-
-  return normalizeCatalog(await response.json());
+  return normalizeCatalog(await fetchJson(endpoint, catalogRequestTimeoutMs));
 }
 
 export async function loadMatchStreams(matchId: string): Promise<StreamOption[]> {
@@ -69,17 +89,7 @@ export async function loadMatchStreams(matchId: string): Promise<StreamOption[]>
 
   for (let attempt = 0; attempt <= streamRequestRetries; attempt += 1) {
     try {
-      const response = await fetch(endpoint, {
-        headers: {
-          Accept: 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`Stream request failed with status ${response.status}`);
-      }
-
-      return normalizeStreamList(await response.json());
+      return normalizeStreamList(await fetchJson(endpoint, streamRequestTimeoutMs));
     } catch (error) {
       lastError =
         error instanceof Error ? error : new Error('Stream request failed');

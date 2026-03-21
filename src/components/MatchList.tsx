@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 
 import { TeamCrest } from './TeamCrest';
 import type { MatchCardData } from '../types';
+import { getPreferredScrollBehavior } from '../utils/platform';
 
 interface MatchListProps {
   matches: MatchCardData[];
@@ -41,7 +42,7 @@ export function MatchList({
   useEffect(() => {
     const node = cardRefs.current[selectedIndex];
     node?.scrollIntoView({
-      behavior: 'smooth',
+      behavior: getPreferredScrollBehavior(),
       block: 'nearest',
       inline: 'center',
     });

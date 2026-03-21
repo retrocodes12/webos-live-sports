@@ -34,7 +34,9 @@ export function TeamCrest({
           src={logoUrl}
           alt={name}
           className="team-crest-image"
-          loading="lazy"
+          decoding="async"
+          draggable={false}
+          loading={size === 'lg' ? 'eager' : 'lazy'}
           onError={() => {
             setFailed(true);
           }}

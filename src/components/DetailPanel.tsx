@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 
 import type { MatchCardData, StreamOption } from '../types';
+import { getPreferredScrollBehavior } from '../utils/platform';
 
 interface DetailPanelProps {
   match: MatchCardData;
@@ -9,6 +10,7 @@ interface DetailPanelProps {
   accent: string;
   isLoadingStreams?: boolean;
   streamError?: string;
+  canRetry?: boolean;
 }
 
 export function DetailPanel({
@@ -18,6 +20,7 @@ export function DetailPanel({
   accent,
   isLoadingStreams = false,
   streamError = '',
+  canRetry = false,
 }: DetailPanelProps) {
   const streamRefs = useRef<Array<HTMLDivElement | null>>([]);
   const streamCount = match.streams.length > 0 ? match.streams.length : match.streamCountHint || 0;
@@ -26,7 +29,7 @@ export function DetailPanel({
   useEffect(() => {
     const node = streamRefs.current[streamIndex];
     node?.scrollIntoView({
-      behavior: 'smooth',
+      behavior: getPreferredScrollBehavior(),
       block: 'nearest',
       inline: 'center',
     });
@@ -57,6 +60,9 @@ export function DetailPanel({
           <div className="stream-state-card error">
             <strong>Stream lookup failed</strong>
             <p>{streamError}</p>
+            {canRetry ? (
+              <span className="stream-state-hint">Press Enter to try this lookup again.</span>
+            ) : null}
           </div>
         ) : null}
 
@@ -64,6 +70,9 @@ export function DetailPanel({
           <div className="stream-state-card">
             <strong>No streams found</strong>
             <p>This match did not return any playable sources from the configured resolver.</p>
+            {canRetry ? (
+              <span className="stream-state-hint">Press Enter to ask the backend for sources again.</span>
+            ) : null}
           </div>
         ) : null}
 

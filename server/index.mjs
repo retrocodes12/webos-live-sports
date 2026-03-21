@@ -22,6 +22,9 @@ const streamCacheTtlMs = Math.max(0, Number(process.env.STREAM_CACHE_TTL_MS || 3
 const streamResolveRetries = Math.max(0, Number(process.env.STREAM_RESOLVE_RETRIES || 2));
 let cachedCatalog = null;
 let cachedCatalogExpiresAt = 0;
+let cachedCatalogLoadedAt = 0;
+let catalogRefreshPromise = null;
+let catalogLastError = '';
 const cachedStreamsByMatchId = new Map();
 
 function buildPublicCatalog(sourceCatalog) {
@@ -51,7 +54,7 @@ function sendJson(response, statusCode, payload) {
     'Cache-Control': 'no-store',
     'Content-Type': 'application/json; charset=utf-8',
   });
-  response.end(JSON.stringify(payload, null, 2));
+  response.end(JSON.stringify(payload));
 }
 
 function sendText(response, statusCode, body, contentType) {
@@ -120,17 +123,51 @@ async function fetchCatalog({ allowStaleOnError = false } = {}) {
     return cachedCatalog;
   }
 
-  try {
+  if (catalogRefreshPromise) {
+    if (allowStaleOnError && cachedCatalog) {
+      return cachedCatalog;
+    }
+    return catalogRefreshPromise;
+  }
+
+  catalogRefreshPromise = (async () => {
     const catalog = await fetchUpstreamCatalog();
     cachedCatalog = catalog;
-    cachedCatalogExpiresAt = now + catalogCacheTtlMs;
+    cachedCatalogLoadedAt = Date.now();
+    cachedCatalogExpiresAt = cachedCatalogLoadedAt + catalogCacheTtlMs;
+    catalogLastError = '';
     return catalog;
+  })()
+    .catch((error) => {
+      catalogLastError =
+        error instanceof Error ? error.message : 'Failed to refresh catalog cache';
+      throw error;
+    })
+    .finally(() => {
+      catalogRefreshPromise = null;
+    });
+
+  try {
+    return await catalogRefreshPromise;
   } catch (error) {
     if (allowStaleOnError && cachedCatalog) {
       return cachedCatalog;
     }
     throw error;
   }
+}
+
+function refreshCatalogInBackground() {
+  const now = Date.now();
+  if (cachedCatalog && cachedCatalogExpiresAt > now) {
+    return;
+  }
+
+  if (catalogRefreshPromise) {
+    return;
+  }
+
+  void fetchCatalog({ allowStaleOnError: true }).catch(() => {});
 }
 
 async function resolveMatchStreams(match) {
@@ -207,12 +244,23 @@ const server = createServer(async (request, response) => {
       upstreamConfigured: Boolean(upstreamCatalogUrl),
       privateSiteConfigured: Boolean(String(process.env.PRIVATE_SITE_BASE_URL || '').trim()),
       resolverConfigured: Boolean(process.env.STREAM_RESOLVER_URL),
+      catalogCached: Boolean(cachedCatalog),
+      catalogRefreshInFlight: Boolean(catalogRefreshPromise),
+      catalogCacheAgeMs: cachedCatalogLoadedAt ? Date.now() - cachedCatalogLoadedAt : null,
+      catalogLastError: catalogLastError || null,
     });
     return;
   }
 
   if (request.method === 'GET' && requestUrl.pathname === '/catalog') {
     try {
+      const now = Date.now();
+      const shouldServeStale =
+        Boolean(cachedCatalog) && cachedCatalogExpiresAt <= now;
+      if (shouldServeStale) {
+        refreshCatalogInBackground();
+      }
+
       const catalog = await fetchCatalog({ allowStaleOnError: true });
       sendJson(response, 200, upstreamCatalogUrl ? catalog : buildPublicCatalog(catalog));
     } catch (error) {
@@ -274,4 +322,5 @@ server.listen(port, '0.0.0.0', () => {
     (process.env.PRIVATE_SITE_BASE_URL ? 'private source catalog' : 'manual catalog');
   const resolverLabel = process.env.STREAM_RESOLVER_URL || 'embedded demo streams';
   console.log(`sportzx API listening on http://127.0.0.1:${port} using ${sourceLabel} and ${resolverLabel}`);
+  refreshCatalogInBackground();
 });

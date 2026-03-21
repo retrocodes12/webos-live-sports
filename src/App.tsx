@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { startTransition, useEffect, useMemo, useRef, useState } from 'react';
 
 import { BrandLogo } from './components/BrandLogo';
 import { DetailPanel } from './components/DetailPanel';
@@ -8,6 +8,7 @@ import { PlayerView } from './components/PlayerView';
 import { SportsColumn } from './components/SportsColumn';
 import { loadMatchStreams, loadSportsCatalog } from './services/api';
 import type { SportsCatalog, StreamOption } from './types';
+import { isBackIntent } from './utils/platform';
 
 type Screen = 'home' | 'detail' | 'player';
 type HomeFocusArea = 'sports' | 'matches';
@@ -18,6 +19,13 @@ const EMPTY_CATALOG: SportsCatalog = {
   matches: [],
 };
 const CATALOG_REFRESH_INTERVAL_MS = 30000;
+
+function formatClockLabel(timestamp = Date.now()) {
+  return new Intl.DateTimeFormat('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(timestamp));
+}
 
 function clampIndex(value: number, length: number) {
   if (length <= 0) {
@@ -41,6 +49,11 @@ export default function App() {
   const [streamErrorsByMatchId, setStreamErrorsByMatchId] = useState<Record<string, string>>({});
   const [loadingStreamMatchIds, setLoadingStreamMatchIds] = useState<Record<string, boolean>>({});
   const [streamLookupDoneByMatchId, setStreamLookupDoneByMatchId] = useState<Record<string, boolean>>({});
+  const [streamLookupNonceByMatchId, setStreamLookupNonceByMatchId] = useState<Record<string, number>>({});
+  const [isRefreshingCatalog, setIsRefreshingCatalog] = useState(false);
+  const [lastCatalogSyncAt, setLastCatalogSyncAt] = useState<number | null>(null);
+  const [lastCatalogLatencyMs, setLastCatalogLatencyMs] = useState<number | null>(null);
+  const [nowLabel, setNowLabel] = useState(() => formatClockLabel());
   const catalogRef = useRef(catalog);
   const screenRef = useRef(screen);
   const catalogRequestInFlightRef = useRef(false);
@@ -55,6 +68,16 @@ export default function App() {
     screenRef.current = screen;
   }, [screen]);
 
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setNowLabel(formatClockLabel());
+    }, 30000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, []);
+
   const sports = catalog.sports;
   const selectedSport = sports[selectedSportIndex] || sports[0];
 
@@ -66,6 +89,9 @@ export default function App() {
   }, [catalog.matches, selectedSport]);
 
   const selectedMatch = filteredMatches[selectedMatchIndex] || filteredMatches[0] || null;
+  const selectedMatchLookupNonce = selectedMatch
+    ? streamLookupNonceByMatchId[selectedMatch.id] || 0
+    : 0;
   const hasResolvedSelectedMatchStreams = selectedMatch
     ? Object.prototype.hasOwnProperty.call(streamsByMatchId, selectedMatch.id)
     : false;
@@ -96,6 +122,53 @@ export default function App() {
     [sports]
   );
   const selectedAccent = selectedMatch ? accentBySport[selectedMatch.sportId] || '#6f7cff' : '#6f7cff';
+  const liveCount = useMemo(
+    () => catalog.matches.filter((match) => match.status === 'live').length,
+    [catalog.matches]
+  );
+  const upcomingCount = useMemo(
+    () => catalog.matches.filter((match) => match.status === 'upcoming').length,
+    [catalog.matches]
+  );
+  const endedCount = Math.max(0, catalog.matches.length - liveCount - upcomingCount);
+  const currentScreenLabel =
+    screen === 'home' ? 'Browse' : screen === 'detail' ? 'Source Detail' : 'Player';
+  const syncLabel = isRefreshingCatalog
+    ? 'Refreshing the live board in the background.'
+    : lastCatalogSyncAt
+      ? `Last sync at ${new Intl.DateTimeFormat('en-US', {
+          hour: 'numeric',
+          minute: '2-digit',
+        }).format(new Date(lastCatalogSyncAt))}${
+          lastCatalogLatencyMs ? ` • ${lastCatalogLatencyMs} ms` : ''
+        }`
+      : 'Waiting for the first live sync.';
+  const canRetrySelectedMatchLookup = Boolean(
+    selectedMatch &&
+    !loadingStreamMatchIds[selectedMatch.id] &&
+    (!selectedMatchStreams.length || streamErrorsByMatchId[selectedMatch.id])
+  );
+
+  function retryStreamsForMatch(matchId: string) {
+    setStreamsByMatchId((current) => {
+      const next = { ...current };
+      delete next[matchId];
+      return next;
+    });
+    setStreamErrorsByMatchId((current) => ({
+      ...current,
+      [matchId]: '',
+    }));
+    setStreamLookupDoneByMatchId((current) => {
+      const next = { ...current };
+      delete next[matchId];
+      return next;
+    });
+    setStreamLookupNonceByMatchId((current) => ({
+      ...current,
+      [matchId]: (current[matchId] || 0) + 1,
+    }));
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -106,17 +179,25 @@ export default function App() {
       }
 
       catalogRequestInFlightRef.current = true;
+      const requestStartedAt = performance.now();
 
       try {
         if (showLoading) {
           setLoading(true);
           setError('');
+        } else {
+          setIsRefreshingCatalog(true);
         }
 
         const nextCatalog = await loadSportsCatalog();
         if (!cancelled) {
-          setCatalog(nextCatalog);
+          const nextLatencyMs = Math.round(performance.now() - requestStartedAt);
+          startTransition(() => {
+            setCatalog(nextCatalog);
+          });
           setError('');
+          setLastCatalogSyncAt(Date.now());
+          setLastCatalogLatencyMs(nextLatencyMs);
 
           const nextSportId = selectedSportIdRef.current;
           const nextSportIndex = nextSportId
@@ -137,10 +218,12 @@ export default function App() {
             ? nextFilteredMatches.findIndex((match) => match.id === nextMatchId)
             : 0;
 
-          setSelectedSportIndex(resolvedSportIndex);
-          setSelectedMatchIndex(
-            clampIndex(nextMatchIndex >= 0 ? nextMatchIndex : 0, nextFilteredMatches.length)
-          );
+          startTransition(() => {
+            setSelectedSportIndex(resolvedSportIndex);
+            setSelectedMatchIndex(
+              clampIndex(nextMatchIndex >= 0 ? nextMatchIndex : 0, nextFilteredMatches.length)
+            );
+          });
         }
       } catch (nextError) {
         if (
@@ -154,6 +237,9 @@ export default function App() {
         catalogRequestInFlightRef.current = false;
         if (!cancelled && showLoading) {
           setLoading(false);
+        }
+        if (!cancelled) {
+          setIsRefreshingCatalog(false);
         }
       }
     };
@@ -224,7 +310,6 @@ export default function App() {
             [selectedMatch.id]:
               nextError instanceof Error ? nextError.message : 'Failed to load streams',
           }));
-          setStreamLookupDoneByMatchId((current) => ({ ...current, [selectedMatch.id]: true }));
         }
       } finally {
         if (!cancelled) {
@@ -238,12 +323,12 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [screen, selectedMatch]);
+  }, [screen, selectedMatch, selectedMatchLookupNonce]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const key = event.key;
-      const isBack = key === 'Backspace' || key === 'Escape' || event.keyCode === 461;
+      const isBack = isBackIntent(event);
       const hasMatch = Boolean(selectedMatch);
 
       if (isBack) {
@@ -338,6 +423,8 @@ export default function App() {
             event.preventDefault();
             if (selectedStream) {
               setScreen('player');
+            } else if (selectedMatch && canRetrySelectedMatchLookup) {
+              retryStreamsForMatch(selectedMatch.id);
             }
             return;
           }
@@ -396,18 +483,12 @@ export default function App() {
     filteredMatches.length,
     homeFocusArea,
     screen,
+    canRetrySelectedMatchLookup,
     selectedMatch,
     selectedMatchStreams.length,
     selectedStream,
     sports.length,
   ]);
-
-  const nowLabel = useMemo(() => {
-    return new Intl.DateTimeFormat('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
-    }).format(new Date());
-  }, []);
 
   if (loading) {
     return (
@@ -428,6 +509,9 @@ export default function App() {
     return (
       <div className="app-shell">
         <div className="panel error-panel">
+          <span className="panel-logo-shell">
+            <BrandLogo className="panel-logo" />
+          </span>
           <span className="panel-kicker">Catalog Error</span>
           <h1>Feed directory unavailable</h1>
           <p>{error}</p>
@@ -443,6 +527,9 @@ export default function App() {
     return (
       <div className="app-shell">
         <div className="panel error-panel">
+          <span className="panel-logo-shell">
+            <BrandLogo className="panel-logo" />
+          </span>
           <span className="panel-kicker">No Matches</span>
           <h1>Your catalog is empty</h1>
           <p>Add authorized matches and streams to the backend payload.</p>
@@ -470,7 +557,11 @@ export default function App() {
             </div>
           </div>
           <div className="header-meta">
-            <span className="status-chip">webOS remote UI</span>
+            <span className={`status-chip status-chip--strong${isRefreshingCatalog ? ' is-pending' : ''}`}>
+              {isRefreshingCatalog ? 'Refreshing' : 'Live Board'}
+            </span>
+            <span className="status-chip">{currentScreenLabel}</span>
+            <span className="status-chip">{selectedSport?.name || 'All Sports'}</span>
             <span className="status-chip">{nowLabel}</span>
           </div>
         </header>
@@ -483,6 +574,11 @@ export default function App() {
             selectedSportId={selectedSport.id}
             selectedIndex={selectedSportIndex}
             isFocused={homeFocusArea === 'sports'}
+            liveCount={liveCount}
+            upcomingCount={upcomingCount}
+            endedCount={endedCount}
+            screenLabel={currentScreenLabel}
+            syncLabel={syncLabel}
           />
           <section className="home-stage">
             <HeroSpotlight
@@ -507,6 +603,11 @@ export default function App() {
             selectedSportId={selectedSport.id}
             selectedIndex={selectedSportIndex}
             isFocused={false}
+            liveCount={liveCount}
+            upcomingCount={upcomingCount}
+            endedCount={endedCount}
+            screenLabel={currentScreenLabel}
+            syncLabel={syncLabel}
           />
           <section className="detail-stage">
             <HeroSpotlight
@@ -523,6 +624,7 @@ export default function App() {
               accent={selectedAccent}
               isLoadingStreams={Boolean(loadingStreamMatchIds[selectedMatch.id])}
               streamError={streamErrorsByMatchId[selectedMatch.id] || ''}
+              canRetry={canRetrySelectedMatchLookup}
             />
           </section>
         </main>
@@ -532,6 +634,15 @@ export default function App() {
         <main className="player-layout">
           <PlayerView match={selectedMatchView} stream={selectedStream} />
         </main>
+      ) : null}
+
+      {screen !== 'player' ? (
+        <footer className="app-command-bar">
+          <span><strong>Arrows</strong> move through lanes</span>
+          <span><strong>Enter</strong> open selection</span>
+          <span><strong>Back</strong> return</span>
+          <span className="app-command-status">{syncLabel}</span>
+        </footer>
       ) : null}
     </div>
   );
