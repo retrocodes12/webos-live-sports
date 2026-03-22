@@ -61,7 +61,7 @@ services:
       - key: PRIVATE_SITE_DEFAULT_LEAGUE
         value: Live Streams
       - key: PRIVATE_SITE_CATALOG_LIMIT
-        value: "24"
+        value: "96"
       - key: PRIVATE_SITE_PROVIDER_LINK_SELECTOR
         value: .data-row a.nocolor[href]
       - key: PRIVATE_SITE_STREAM_LINK_SELECTOR
@@ -80,12 +80,26 @@ services:
         value: "2"
       - key: PRIVATE_SITE_MAX_PROVIDER_CANDIDATES
         value: "12"
+      - key: PRIVATE_SITE_MATCH_SCORE_THRESHOLD
+        value: "45"
       - key: PRIVATE_SITE_PROVIDER_RESOLVE_LIMIT
         value: "7"
       - key: PRIVATE_SITE_PROVIDER_FETCH_TIMEOUT_MS
         value: "2500"
       - key: PRIVATE_SITE_DETAIL_PAGE_FETCH_TIMEOUT_MS
         value: "3000"
+      - key: SECONDARY_PRIVATE_SITE_ENABLED
+        value: "true"
+      - key: SECONDARY_PRIVATE_SITE_BASE_URL
+        value: https://www.b4xsports.in/?m=1
+      - key: SECONDARY_PRIVATE_SITE_MATCH_CARD_SELECTOR
+        value: .containermatch a[href]
+      - key: SECONDARY_PRIVATE_SITE_MATCH_SCORE_THRESHOLD
+        value: "100"
+      - key: SECONDARY_PRIVATE_SITE_WATCH_LINK_SELECTOR
+        value: a[href*="/p/liv.html"], a[href*="/p/iframe.html"], a[href*=".m3u8"], a[href*=".mpd"], a[href*=".mp4"]
+      - key: SECONDARY_PRIVATE_SITE_PROVIDER_NAME
+        value: B4X Sports
       - key: CATALOG_CACHE_TTL_MS
         value: "30000"
       - key: STREAM_CACHE_TTL_MS

@@ -213,12 +213,11 @@ export function PlayerView({ match, stream }: PlayerViewProps) {
             className="player-embed"
             src={stream.url}
             title={streamLabel}
-            allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
+            allow="autoplay; fullscreen; picture-in-picture; encrypted-media; clipboard-read; clipboard-write"
             allowFullScreen
             loading="eager"
             tabIndex={0}
-            sandbox="allow-same-origin allow-scripts allow-forms allow-presentation"
-            referrerPolicy="no-referrer"
+            sandbox="allow-same-origin allow-scripts allow-forms allow-presentation allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads allow-top-navigation-by-user-activation"
             onLoad={() => {
               if (embedTimeoutRef.current) {
                 window.clearTimeout(embedTimeoutRef.current);

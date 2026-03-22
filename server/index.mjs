@@ -21,6 +21,7 @@ const catalogCacheTtlMs = Math.max(0, Number(process.env.CATALOG_CACHE_TTL_MS ||
 const streamCacheTtlMs = Math.max(0, Number(process.env.STREAM_CACHE_TTL_MS || 300000));
 const streamResolveRetries = Math.max(0, Number(process.env.STREAM_RESOLVE_RETRIES || 0));
 const privateSiteBaseUrl = String(process.env.PRIVATE_SITE_BASE_URL || '').trim();
+const secondaryPrivateSiteBaseUrl = String(process.env.SECONDARY_PRIVATE_SITE_BASE_URL || '').trim();
 const streamResolverUrl = String(process.env.STREAM_RESOLVER_URL || '').trim();
 let cachedCatalog = null;
 let cachedCatalogExpiresAt = 0;
@@ -28,6 +29,173 @@ let cachedCatalogLoadedAt = 0;
 let catalogRefreshPromise = null;
 let catalogLastError = '';
 const cachedStreamsByMatchId = new Map();
+
+function normalizeMatchName(value) {
+  const genericTokens = new Set([
+    'a',
+    'ac',
+    'af',
+    'afc',
+    'association',
+    'c',
+    'cf',
+    'club',
+    'da',
+    'de',
+    'del',
+    'deportivo',
+    'do',
+    'fc',
+    'football',
+    'futbol',
+    'rc',
+    'sc',
+    'se',
+    'team',
+    'the',
+  ]);
+
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token && !genericTokens.has(token))
+    .join(' ');
+}
+
+function normalizeSportName(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+}
+
+function getSecondarySportPriority(sport) {
+  const normalizedName = normalizeSportName(sport?.name);
+  const priorityByName = new Map([
+    ['mls', 0],
+    ['ufc', 1],
+    ['boxing', 2],
+    ['f1', 3],
+    ['motogp', 4],
+    ['cricket', 5],
+    ['tennis', 6],
+    ['basketball', 7],
+    ['nba', 7],
+    ['mlb', 8],
+  ]);
+
+  return priorityByName.get(normalizedName) ?? 100;
+}
+
+function namesLikelyMatch(left, right) {
+  const normalizedLeft = normalizeMatchName(left);
+  const normalizedRight = normalizeMatchName(right);
+
+  if (!normalizedLeft || !normalizedRight) {
+    return false;
+  }
+
+  return (
+    normalizedLeft === normalizedRight ||
+    normalizedLeft.includes(normalizedRight) ||
+    normalizedRight.includes(normalizedLeft)
+  );
+}
+
+function findMatchingCatalogMatch(primaryMatches, candidateMatch) {
+  return primaryMatches.find((entry) => {
+    const homeMatches = namesLikelyMatch(entry.homeTeam, candidateMatch.homeTeam);
+    const awayMatches = namesLikelyMatch(entry.awayTeam, candidateMatch.awayTeam);
+    const reverseHomeMatches = namesLikelyMatch(entry.homeTeam, candidateMatch.awayTeam);
+    const reverseAwayMatches = namesLikelyMatch(entry.awayTeam, candidateMatch.homeTeam);
+
+    return (homeMatches && awayMatches) || (reverseHomeMatches && reverseAwayMatches);
+  });
+}
+
+function mergeCatalogs(primaryCatalog, secondaryCatalog) {
+  if (!secondaryCatalog) {
+    return primaryCatalog;
+  }
+
+  const mergedSports = [...primaryCatalog.sports];
+  const seenSportIds = new Set(mergedSports.map((sport) => sport.id));
+  const primarySportByNormalizedName = new Map(
+    mergedSports.map((sport) => [normalizeSportName(sport.name), sport])
+  );
+  const remappedSportIds = new Map();
+  const secondaryUniqueSports = [];
+
+  secondaryCatalog.sports.forEach((sport) => {
+    const normalizedName = normalizeSportName(sport.name);
+    const matchingPrimarySport = normalizedName
+      ? primarySportByNormalizedName.get(normalizedName)
+      : undefined;
+
+    if (matchingPrimarySport) {
+      remappedSportIds.set(sport.id, matchingPrimarySport.id);
+      return;
+    }
+
+    if (!seenSportIds.has(sport.id)) {
+      seenSportIds.add(sport.id);
+      secondaryUniqueSports.push(sport);
+    }
+  });
+
+  secondaryUniqueSports
+    .sort((left, right) => {
+      const priorityDelta = getSecondarySportPriority(left) - getSecondarySportPriority(right);
+      if (priorityDelta !== 0) {
+        return priorityDelta;
+      }
+
+      return String(left.name || '').localeCompare(String(right.name || ''));
+    })
+    .forEach((sport) => {
+      mergedSports.push(sport);
+    });
+
+  const mergedSportsById = new Map(mergedSports.map((sport) => [sport.id, sport]));
+  const mergedMatches = [...primaryCatalog.matches];
+
+  secondaryCatalog.matches.forEach((secondaryMatch) => {
+    const remappedSportId = remappedSportIds.get(secondaryMatch.sportId) || secondaryMatch.sportId;
+    const remappedSport = mergedSportsById.get(remappedSportId);
+    const normalizedSecondaryMatch =
+      remappedSportId === secondaryMatch.sportId && !remappedSport
+        ? secondaryMatch
+        : {
+            ...secondaryMatch,
+            sportId: remappedSportId,
+            sportName: remappedSport?.name || secondaryMatch.sportName,
+          };
+    const existingMatch = findMatchingCatalogMatch(mergedMatches, normalizedSecondaryMatch);
+    if (existingMatch) {
+      if (!existingMatch.resolverQuery && normalizedSecondaryMatch.resolverQuery) {
+        existingMatch.resolverQuery = normalizedSecondaryMatch.resolverQuery;
+      }
+      if (!existingMatch.streamCountHint && normalizedSecondaryMatch.streamCountHint) {
+        existingMatch.streamCountHint = normalizedSecondaryMatch.streamCountHint;
+      }
+      if ((!existingMatch.tags || existingMatch.tags.length === 0) && normalizedSecondaryMatch.tags?.length) {
+        existingMatch.tags = normalizedSecondaryMatch.tags;
+      }
+      return;
+    }
+
+    mergedMatches.push(normalizedSecondaryMatch);
+  });
+
+  return {
+    sports: mergedSports,
+    matches: mergedMatches,
+  };
+}
 
 function buildPublicCatalog(sourceCatalog) {
   return {
@@ -108,8 +276,9 @@ function resolveUpstreamCatalogUrl() {
 
 async function fetchUpstreamCatalog() {
   const upstreamCatalogUrl = resolveUpstreamCatalogUrl();
+  const { module: privateResolverModule } = await loadPrivateResolverModule();
+
   if (!upstreamCatalogUrl) {
-    const { module: privateResolverModule } = await loadPrivateResolverModule();
     if (typeof privateResolverModule.loadPrivateCatalog === 'function') {
       return await privateResolverModule.loadPrivateCatalog({ timeoutMs: upstreamTimeoutMs });
     }
@@ -134,7 +303,18 @@ async function fetchUpstreamCatalog() {
     }
 
     const payload = await response.json();
-    return adaptCatalogPayload(payload);
+    const upstreamCatalog = adaptCatalogPayload(payload);
+
+    if (typeof privateResolverModule.loadPrivateCatalog !== 'function' || !privateSiteBaseUrl) {
+      return upstreamCatalog;
+    }
+
+    try {
+      const privateCatalog = await privateResolverModule.loadPrivateCatalog({ timeoutMs: upstreamTimeoutMs });
+      return mergeCatalogs(upstreamCatalog, privateCatalog);
+    } catch {
+      return upstreamCatalog;
+    }
   } finally {
     clearTimeout(timeoutId);
   }
@@ -236,6 +416,18 @@ function setCachedStreams(matchId, streams) {
   });
 }
 
+function shouldTreatStreamLookupAsPending(match, error) {
+  if (!match || match.status !== 'upcoming') {
+    return false;
+  }
+
+  const message = String(error instanceof Error ? error.message : error || '').toLowerCase();
+  return (
+    message.includes('could not locate a matching event page on the private website') ||
+    message.includes('could not resolve streams from the private website')
+  );
+}
+
 const server = createServer(async (request, response) => {
   if (!request.url) {
     sendJson(response, 400, { error: 'Missing request URL' });
@@ -267,7 +459,8 @@ const server = createServer(async (request, response) => {
       ok: true,
       upstreamConfigured: Boolean(upstreamCatalogUrlTemplate),
       privateSiteConfigured: Boolean(privateSiteBaseUrl),
-      resolverConfigured: Boolean(streamResolverUrl || privateSiteBaseUrl),
+      secondaryPrivateSiteConfigured: Boolean(secondaryPrivateSiteBaseUrl),
+      resolverConfigured: Boolean(streamResolverUrl || privateSiteBaseUrl || secondaryPrivateSiteBaseUrl),
       catalogCached: Boolean(cachedCatalog),
       catalogRefreshInFlight: Boolean(catalogRefreshPromise),
       catalogCacheAgeMs: cachedCatalogLoadedAt ? Date.now() - cachedCatalogLoadedAt : null,
@@ -325,6 +518,16 @@ const server = createServer(async (request, response) => {
       const cachedStreams = getCachedStreams(matchId);
       if (cachedStreams) {
         sendJson(response, 200, { streams: cachedStreams });
+        return;
+      }
+      const catalog = await fetchCatalog({ allowStaleOnError: true }).catch(() => null);
+      const match = catalog?.matches?.find((entry) => entry.id === matchId) || null;
+      if (shouldTreatStreamLookupAsPending(match, error)) {
+        sendJson(response, 200, {
+          streams: [],
+          pending: true,
+          message: 'Streams are not posted yet for this upcoming match. Try again closer to kickoff.',
+        });
         return;
       }
       sendJson(response, 502, {

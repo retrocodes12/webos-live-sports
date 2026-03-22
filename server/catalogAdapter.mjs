@@ -25,8 +25,55 @@ function sanitizeId(input, fallback) {
   return raw || fallback;
 }
 
-function normalizeStatus(status) {
-  const raw = String(status || '').trim().toLowerCase();
+function parseDateValue(value) {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = new Date(String(value));
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function hasCompletedScoreSnapshot(match) {
+  const winner = String(match?.score?.winner || '').trim().toUpperCase();
+  const duration = String(match?.score?.duration || '').trim().toUpperCase();
+  const fullTime = match?.score?.fullTime;
+
+  return (
+    ['HOME_TEAM', 'AWAY_TEAM', 'DRAW'].includes(winner) &&
+    duration === 'REGULAR' &&
+    fullTime &&
+    (fullTime.home != null || fullTime.away != null)
+  );
+}
+
+function isStaleLiveMatch(match, rawStatus) {
+  if (!['live', 'inplay', 'in-play', 'in_play', 'playing', 'active', 'paused'].includes(rawStatus)) {
+    return false;
+  }
+
+  const kickoffDate = parseDateValue(
+    match?.utcDate || match?.startTime || match?.startsAt || match?.scheduledAt
+  );
+  const lastUpdatedDate = parseDateValue(match?.lastUpdated || match?.updatedAt);
+  const now = Date.now();
+
+  const kickoffAgeMs = kickoffDate ? now - kickoffDate.getTime() : 0;
+  const lastUpdatedAgeMs = lastUpdatedDate ? now - lastUpdatedDate.getTime() : Number.POSITIVE_INFINITY;
+
+  return kickoffAgeMs >= 3 * 60 * 60 * 1000 && (hasCompletedScoreSnapshot(match) || lastUpdatedAgeMs >= 2 * 60 * 60 * 1000);
+}
+
+function normalizeStatus(matchOrStatus) {
+  const raw =
+    typeof matchOrStatus === 'object' && matchOrStatus !== null
+      ? String(matchOrStatus.status || '').trim().toLowerCase()
+      : String(matchOrStatus || '').trim().toLowerCase();
+
+  if (typeof matchOrStatus === 'object' && matchOrStatus !== null && isStaleLiveMatch(matchOrStatus, raw)) {
+    return 'ended';
+  }
+
   if (['live', 'inplay', 'in-play', 'in_play', 'playing', 'active', 'paused'].includes(raw)) {
     return 'live';
   }
@@ -344,7 +391,7 @@ function normalizeMatch(match, index) {
     title: String(match?.title || `${homeTeam} vs ${awayTeam}`),
     summary: String(match?.summary || match?.description || match?.subtitle || 'Authorized sports event.'),
     venue: String(match?.venue || match?.location || 'Venue pending'),
-    status: normalizeStatus(match?.status),
+    status: normalizeStatus(match),
     kickoffLabel: formatKickoffLabel(
       match?.kickoffLabel || match?.startTime || match?.startsAt || match?.scheduledAt || match?.utcDate
     ),

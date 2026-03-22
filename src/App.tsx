@@ -118,6 +118,13 @@ export default function App() {
     ? { ...selectedMatch, streams: selectedMatchStreams }
     : null;
   const selectedStream = selectedMatchStreams[selectedStreamIndex] || selectedMatchStreams[0] || null;
+  const safeScreen: Screen = screen === 'player' && !selectedStream ? 'detail' : screen;
+
+  useEffect(() => {
+    if (screen === 'player' && !selectedStream) {
+      setScreen(selectedMatch ? 'detail' : 'home');
+    }
+  }, [screen, selectedMatch, selectedStream]);
 
   useEffect(() => {
     selectedSportIdRef.current = selectedSport?.id || '';
@@ -146,7 +153,7 @@ export default function App() {
   );
   const endedCount = Math.max(0, catalog.matches.length - liveCount - upcomingCount);
   const currentScreenLabel =
-    screen === 'home' ? 'Browse' : screen === 'detail' ? 'Source Detail' : 'Player';
+    safeScreen === 'home' ? 'Browse' : safeScreen === 'detail' ? 'Source Detail' : 'Player';
   const syncLabel = isRefreshingCatalog
     ? 'Refreshing the live board in the background.'
     : lastCatalogSyncAt
@@ -312,9 +319,12 @@ export default function App() {
       try {
         setLoadingStreamMatchIds((current) => ({ ...current, [selectedMatch.id]: true }));
         setStreamErrorsByMatchId((current) => ({ ...current, [selectedMatch.id]: '' }));
-        const streams = await loadMatchStreams(selectedMatch.id);
+        const lookupResult = await loadMatchStreams(selectedMatch.id);
         if (!cancelled) {
-          setStreamsByMatchId((current) => ({ ...current, [selectedMatch.id]: streams }));
+          setStreamsByMatchId((current) => ({
+            ...current,
+            [selectedMatch.id]: lookupResult.streams,
+          }));
           setStreamLookupDoneByMatchId((current) => ({ ...current, [selectedMatch.id]: true }));
         }
       } catch (nextError) {
@@ -378,7 +388,7 @@ export default function App() {
         return;
       }
 
-      if (screen === 'home') {
+      if (safeScreen === 'home') {
         if (homeFocusArea === 'sports') {
           if (key === 'ArrowUp') {
             event.preventDefault();
@@ -425,7 +435,7 @@ export default function App() {
         return;
       }
 
-      if (screen === 'detail') {
+      if (safeScreen === 'detail') {
         if (detailFocusArea === 'summary') {
           if (key === 'ArrowRight' || key === 'ArrowDown') {
             event.preventDefault();
@@ -465,7 +475,7 @@ export default function App() {
         return;
       }
 
-      if (screen === 'player') {
+      if (safeScreen === 'player') {
         if (selectedStream?.kind === 'embed') {
           if (key === 'Enter') {
             event.preventDefault();
@@ -515,6 +525,7 @@ export default function App() {
     detailFocusArea,
     filteredMatches.length,
     homeFocusArea,
+    safeScreen,
     screen,
     canRetrySelectedMatchLookup,
     selectedMatch,
@@ -572,13 +583,13 @@ export default function App() {
   }
 
   return (
-    <div className={`app-shell${screen === 'player' ? ' player-shell' : ''}`} style={{ ['--accent' as string]: selectedAccent }}>
+    <div className={`app-shell${safeScreen === 'player' ? ' player-shell' : ''}`} style={{ ['--accent' as string]: selectedAccent }}>
       <div className="app-ambient" aria-hidden="true">
         <div className="app-orb orb-one" />
         <div className="app-orb orb-two" />
       </div>
 
-      {screen !== 'player' ? (
+      {safeScreen !== 'player' ? (
         <header className="app-header">
           <div className="brand-lockup">
             <span className="brand-mark">
@@ -600,7 +611,7 @@ export default function App() {
         </header>
       ) : null}
 
-      {screen === 'home' ? (
+      {safeScreen === 'home' ? (
         <main className="shell-layout">
           <SportsColumn
             sports={sports}
@@ -629,7 +640,7 @@ export default function App() {
         </main>
       ) : null}
 
-      {screen === 'detail' ? (
+      {safeScreen === 'detail' ? (
         <main className="shell-layout">
           <SportsColumn
             sports={sports}
@@ -663,13 +674,13 @@ export default function App() {
         </main>
       ) : null}
 
-      {screen === 'player' && selectedStream && selectedMatchView ? (
+      {safeScreen === 'player' && selectedStream && selectedMatchView ? (
         <main className="player-layout">
           <PlayerView match={selectedMatchView} stream={selectedStream} />
         </main>
       ) : null}
 
-      {screen !== 'player' ? (
+      {safeScreen !== 'player' ? (
         <footer className="app-command-bar">
           <span><strong>Arrows</strong> move through lanes</span>
           <span><strong>Enter</strong> open selection</span>

@@ -1,4 +1,9 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
 import { load } from 'cheerio';
+
+const execFileAsync = promisify(execFile);
 
 const RESOLVER_URL = process.env.STREAM_RESOLVER_URL || '';
 const RESOLVER_BEARER = process.env.STREAM_RESOLVER_AUTH_BEARER || '';
@@ -39,7 +44,7 @@ const PRIVATE_SITE_DEFAULT_LEAGUE =
   process.env.PRIVATE_SITE_DEFAULT_LEAGUE || 'External Source';
 const PRIVATE_SITE_CATALOG_LIMIT = Math.max(
   1,
-  Number(process.env.PRIVATE_SITE_CATALOG_LIMIT || 24)
+  Number(process.env.PRIVATE_SITE_CATALOG_LIMIT || 96)
 );
 const PRIVATE_SITE_PROVIDER_LINK_SELECTOR =
   process.env.PRIVATE_SITE_PROVIDER_LINK_SELECTOR || '';
@@ -79,11 +84,32 @@ const PRIVATE_SITE_DETAIL_PAGE_FETCH_TIMEOUT_MS = Math.max(
   1000,
   Number(process.env.PRIVATE_SITE_DETAIL_PAGE_FETCH_TIMEOUT_MS || 3000)
 );
+const PRIVATE_SITE_MATCH_SCORE_THRESHOLD = Math.max(
+  1,
+  Number(process.env.PRIVATE_SITE_MATCH_SCORE_THRESHOLD || 45)
+);
+const SECONDARY_PRIVATE_SITE_ENABLED =
+  String(process.env.SECONDARY_PRIVATE_SITE_ENABLED || '').toLowerCase() !== 'false';
+const SECONDARY_PRIVATE_SITE_BASE_URL =
+  process.env.SECONDARY_PRIVATE_SITE_BASE_URL || '';
+const SECONDARY_PRIVATE_SITE_MATCH_CARD_SELECTOR =
+  process.env.SECONDARY_PRIVATE_SITE_MATCH_CARD_SELECTOR || '.containermatch a[href]';
+const SECONDARY_PRIVATE_SITE_WATCH_LINK_SELECTOR =
+  process.env.SECONDARY_PRIVATE_SITE_WATCH_LINK_SELECTOR ||
+  'a[href*="/p/liv.html"], a[href*="/p/iframe.html"], a[href*=".m3u8"], a[href*=".mpd"], a[href*=".mp4"]';
+const SECONDARY_PRIVATE_SITE_PROVIDER_NAME =
+  process.env.SECONDARY_PRIVATE_SITE_PROVIDER_NAME || 'B4X Sports';
+const SECONDARY_PRIVATE_SITE_MATCH_SCORE_THRESHOLD = Math.max(
+  1,
+  Number(process.env.SECONDARY_PRIVATE_SITE_MATCH_SCORE_THRESHOLD || 100)
+);
+const HTML_FETCH_MAX_BUFFER_BYTES = Math.max(
+  1_048_576,
+  Number(process.env.PRIVATE_SITE_FETCH_MAX_BUFFER_BYTES || 8_388_608)
+);
 
-function buildHeaders() {
+function buildHtmlHeaders() {
   const headers = {
-    Accept: 'application/json, text/html;q=0.9, */*;q=0.8',
-    'Content-Type': 'application/json',
     'User-Agent':
       'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36',
   };
@@ -97,6 +123,45 @@ function buildHeaders() {
   }
 
   return headers;
+}
+
+function buildHeaders() {
+  return {
+    ...buildHtmlHeaders(),
+    Accept: 'application/json',
+    'Content-Type': 'application/json',
+  };
+}
+
+async function fetchHtmlWithCurl(url, timeoutMs) {
+  const args = [
+    '-L',
+    '--silent',
+    '--show-error',
+    '--fail',
+    '--compressed',
+    '--max-time',
+    String(Math.max(1, Math.ceil(timeoutMs / 1000))),
+  ];
+
+  Object.entries(buildHtmlHeaders()).forEach(([headerName, headerValue]) => {
+    if (!headerName || headerValue == null || headerValue === '') {
+      return;
+    }
+    args.push('-H', `${headerName}: ${headerValue}`);
+  });
+  args.push(url);
+
+  const { stdout } = await execFileAsync('curl', args, {
+    encoding: 'utf8',
+    maxBuffer: HTML_FETCH_MAX_BUFFER_BYTES,
+  });
+
+  if (!stdout) {
+    throw new Error('Website request returned an empty response body');
+  }
+
+  return stdout;
 }
 
 function toAbsoluteUrl(url, baseUrl = PRIVATE_SITE_BASE_URL) {
@@ -169,35 +234,39 @@ function normalizeStreams(payload) {
 }
 
 async function fetchHtml(url, timeoutMs, maxRetries = PRIVATE_SITE_FETCH_RETRIES) {
-  let lastError = null;
+  try {
+    return await fetchHtmlWithCurl(url, timeoutMs);
+  } catch (curlError) {
+    let lastError = curlError;
 
-  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-    try {
-      const response = await fetch(url, {
-        headers: buildHeaders(),
-        signal: controller.signal,
-      });
+      try {
+        const response = await fetch(url, {
+          headers: buildHtmlHeaders(),
+          signal: controller.signal,
+        });
 
-      if (!response.ok) {
-        throw new Error(`Website request failed with status ${response.status}`);
+        if (!response.ok) {
+          throw new Error(`Website request failed with status ${response.status}`);
+        }
+
+        return await response.text();
+      } catch (error) {
+        lastError = error;
+        if (attempt >= maxRetries) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+      } finally {
+        clearTimeout(timeoutId);
       }
-
-      return await response.text();
-    } catch (error) {
-      lastError = error;
-      if (attempt >= maxRetries) {
-        throw error;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
-    } finally {
-      clearTimeout(timeoutId);
     }
-  }
 
-  throw lastError || new Error('Website request failed');
+    throw lastError || new Error('Website request failed');
+  }
 }
 
 function buildSearchUrl(match, resolverQuery) {
@@ -252,6 +321,68 @@ function dedupeCandidates(candidates) {
   });
 }
 
+function safeDecodeURIComponent(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return String(value || '');
+  }
+}
+
+function decodeUrlLikeValue(value, maxDepth = 3) {
+  let decoded = String(value || '').trim();
+  for (let depth = 0; depth < maxDepth; depth += 1) {
+    const nextValue = safeDecodeURIComponent(decoded).trim();
+    if (!nextValue || nextValue === decoded) {
+      break;
+    }
+    decoded = nextValue;
+  }
+  return decoded;
+}
+
+function looksLikeDirectMediaUrl(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) {
+    return false;
+  }
+
+  try {
+    return /\.(?:m3u8|mpd|mp4)$/i.test(new URL(normalized).pathname);
+  } catch {
+    return /(?:^|\/)[^"'`\s<>]+\.(?:m3u8|mpd|mp4)(?:$|[?#])/i.test(normalized);
+  }
+}
+
+function inferStreamQuality(value) {
+  const normalized = String(value || '').toLowerCase();
+  if (normalized.includes('4k') || normalized.includes('uhd')) {
+    return '4K';
+  }
+  if (
+    normalized.includes('fhd') ||
+    normalized.includes('1080') ||
+    normalized.includes('full hd')
+  ) {
+    return 'FHD';
+  }
+  if (normalized.includes('hd') || normalized.includes('720')) {
+    return 'HD';
+  }
+  if (normalized.includes('sd') || normalized.includes('480')) {
+    return 'SD';
+  }
+  return 'Auto';
+}
+
+function normalizeCandidateLabel(label, fallback) {
+  const normalized = String(label || '')
+    .replace(/\s+/g, ' ')
+    .replace(/\s*\|\s*/g, ' • ')
+    .trim();
+  return normalized || fallback;
+}
+
 function inferProviderName(url) {
   try {
     return new URL(url).hostname.replace(/^www\./, '');
@@ -280,6 +411,7 @@ function getSearchFragments(value) {
     'a',
     'ac',
     'af',
+    'afc',
     'association',
     'c',
     'cf',
@@ -301,8 +433,17 @@ function getSearchFragments(value) {
     .split(' ')
     .filter((token) => token && !genericTokens.has(token))
     .join(' ');
+  const shortened = simplified
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .join(' ');
 
-  return [...new Set([normalized, simplified].filter((fragment) => fragment && fragment.length >= 3))];
+  return [
+    ...new Set(
+      [normalized, simplified, shortened].filter((fragment) => fragment && fragment.length >= 3)
+    ),
+  ];
 }
 
 function getPrimarySearchFragment(value) {
@@ -552,6 +693,7 @@ function classifyLeagueCategory(league, title = '') {
     { test: /ligue-1|ligue 1/, id: 'ligue1', name: 'Ligue 1', shortLabel: 'L1', accent: '#8b5cf6' },
     { test: /primeiraliga|primeira liga|liga portugal/, id: 'primeira', name: 'Primeira Liga', shortLabel: 'POR', accent: '#10b981' },
     { test: /eredi/i, id: 'eredi', name: 'Eredivisie', shortLabel: 'ERE', accent: '#f97316' },
+    { test: /\bmls\b|major league soccer/, id: 'mls', name: 'MLS', shortLabel: 'MLS', accent: '#60a5fa' },
     { test: /championship/, id: 'championship', name: 'Championship', shortLabel: 'EFL', accent: '#84cc16' },
     { test: /boxing/, id: 'boxing', name: 'Boxing', shortLabel: 'BOX', accent: '#ef4444' },
     { test: /ufc|mma|fight night/, id: 'ufc', name: 'UFC', shortLabel: 'UFC', accent: '#dc2626' },
@@ -727,10 +869,7 @@ function buildCatalogSports(matches) {
     });
   });
 
-  return [
-    { id: 'all', name: 'All Sports', accent: '#2dd4bf', shortLabel: 'ALL' },
-    ...derivedSports,
-  ];
+  return derivedSports;
 }
 
 function extractMatchPageCandidates(html, match, resolverQuery) {
@@ -756,7 +895,9 @@ function extractMatchPageCandidates(html, match, resolverQuery) {
   });
 
   candidates.sort((left, right) => right.score - left.score);
-  return dedupeCandidates(candidates).map((entry) => entry.url);
+  return dedupeCandidates(
+    candidates.filter((entry) => entry.score >= PRIVATE_SITE_MATCH_SCORE_THRESHOLD)
+  ).map((entry) => entry.url);
 }
 
 function extractProviderPageCandidates(html, pageUrl) {
@@ -812,7 +953,16 @@ function extractProviderPageCandidates(html, pageUrl) {
 }
 
 function extractInlineMediaCandidates(html, pageUrl) {
-  const matches = html.match(/https?:\/\/[^"' )]+?\.(m3u8|mpd|mp4)(\?[^"' )]*)?/gi) || [];
+  const normalizedHtml = String(html || '').replace(/\\\//g, '/');
+  const absoluteMatches =
+    normalizedHtml.match(/(?:https?:)?\/\/[^"'`\s)<>]+?\.(m3u8|mpd|mp4)(\?[^"'`\s)<>]*)?/gi) || [];
+  const quotedRelativeMatches = Array.from(
+    normalizedHtml.matchAll(
+      /["'`]((?:(?:https?:)?\/\/|\/)[^"'`\r\n]+?\.(?:m3u8|mpd|mp4)(?:\?[^"'`\r\n]*)?)["'`]/gi
+    ),
+    (match) => match[1]
+  );
+  const matches = [...absoluteMatches, ...quotedRelativeMatches];
   return dedupeCandidates(
     matches.map((match, index) => ({
       id: `inline-stream-${index + 1}`,
@@ -824,6 +974,24 @@ function extractInlineMediaCandidates(html, pageUrl) {
       url: toAbsoluteUrl(match, pageUrl),
     }))
   );
+}
+
+function getStreamPriority(stream) {
+  switch (stream?.kind) {
+    case 'hls':
+      return 0;
+    case 'mp4':
+      return 1;
+    case 'dash':
+      return 2;
+    case 'embed':
+    default:
+      return 3;
+  }
+}
+
+function prioritizeStreamsForPlayback(streams) {
+  return [...streams].sort((left, right) => getStreamPriority(left) - getStreamPriority(right));
 }
 
 function extractDirectStreamCandidates(html, pageUrl) {
@@ -860,6 +1028,336 @@ function extractDirectStreamCandidates(html, pageUrl) {
   });
 
   return dedupeCandidates(results.concat(extractInlineMediaCandidates(html, pageUrl)));
+}
+
+function isBlockedOrUnavailableProviderPage(html, pageUrl = '') {
+  const normalizedHtml = String(html || '').toLowerCase();
+  const normalizedUrl = String(pageUrl || '').toLowerCase();
+
+  const blockedPatterns = [
+    'access restricted',
+    'authorized websites',
+    'domain embedding blocked',
+    'event not available',
+    'page not found',
+    '404 not found',
+    'error 404',
+    'this event was not found or has been removed',
+  ];
+
+  if (blockedPatterns.some((pattern) => normalizedHtml.includes(pattern))) {
+    return true;
+  }
+
+  return (
+    normalizedUrl.includes('/404') ||
+    normalizedUrl.includes('page-not-found') ||
+    normalizedUrl.includes('/not-found')
+  );
+}
+
+function extractSecondaryMatchPageCandidates(html, match, resolverQuery) {
+  if (!SECONDARY_PRIVATE_SITE_BASE_URL) {
+    return [];
+  }
+
+  const $ = load(html);
+  const candidates = [];
+  const titleFragments = getSearchFragments(resolverQuery?.title || match.title);
+  const homeFragments = getSearchFragments(match.homeTeam);
+  const awayFragments = getSearchFragments(match.awayTeam);
+
+  $(SECONDARY_PRIVATE_SITE_MATCH_CARD_SELECTOR).each((index, element) => {
+    const href =
+      $(element).attr('href') ||
+      $(element).attr('data-href') ||
+      $(element).attr('data-url') ||
+      '';
+    const absoluteUrl = toAbsoluteUrl(href, SECONDARY_PRIVATE_SITE_BASE_URL);
+    if (!absoluteUrl) {
+      return;
+    }
+
+    let slug = '';
+    try {
+      slug = new URL(absoluteUrl).pathname
+        .split('/')
+        .filter(Boolean)
+        .at(-1)
+        ?.replace(/\.html?$/i, '')
+        ?.replace(/-/g, ' ') || '';
+    } catch {
+      slug = '';
+    }
+
+    const title = $(element).attr('title') || '';
+    const homeTeam = $(element).find('.matchname.left').first().text().trim();
+    const awayTeam = $(element).find('.matchname.right').first().text().trim();
+    const league = $(element).find('.lgnm').first().text().trim();
+    const round = $(element).find('.info li').first().text().trim();
+    const haystack = normalizeSearchText(
+      [title, slug, homeTeam, awayTeam, league, round, absoluteUrl, $(element).text()]
+        .filter(Boolean)
+        .join(' ')
+    );
+    const matchedTitle = titleFragments.some((fragment) => haystack.includes(fragment));
+    const matchedHome = homeFragments.some((fragment) => haystack.includes(fragment));
+    const matchedAway = awayFragments.some((fragment) => haystack.includes(fragment));
+
+    if (!matchedTitle && !(matchedHome && matchedAway)) {
+      return;
+    }
+
+    candidates.push({
+      url: absoluteUrl,
+      score: scoreMatchCandidate(match, resolverQuery, haystack, index),
+    });
+  });
+
+  candidates.sort((left, right) => right.score - left.score);
+  return dedupeCandidates(candidates).map((entry) => entry.url);
+}
+
+function extractSecondaryWatchCandidates(html, pageUrl) {
+  if (!SECONDARY_PRIVATE_SITE_WATCH_LINK_SELECTOR) {
+    return [];
+  }
+
+  const $ = load(html);
+  const candidates = [];
+
+  $(SECONDARY_PRIVATE_SITE_WATCH_LINK_SELECTOR).each((index, element) => {
+    const href =
+      $(element).attr('href') ||
+      $(element).attr('src') ||
+      $(element).attr('data-url') ||
+      '';
+    const url = toAbsoluteUrl(href, pageUrl);
+    if (!url) {
+      return;
+    }
+
+    const label = normalizeCandidateLabel($(element).text().trim(), `B4X Link ${index + 1}`);
+
+    candidates.push({
+      id: `secondary-provider-${index + 1}`,
+      label,
+      provider: SECONDARY_PRIVATE_SITE_PROVIDER_NAME,
+      quality: inferStreamQuality(label),
+      language: 'English',
+      type: 'embed',
+      url,
+    });
+  });
+
+  return dedupeCandidates(candidates);
+}
+
+function extractSecondaryWatchPageCandidates(html, pageUrl) {
+  const $ = load(html);
+  const candidates = [];
+
+  $('a[href*="/p/"]').each((index, element) => {
+    const href =
+      $(element).attr('href') ||
+      $(element).attr('data-href') ||
+      $(element).attr('data-url') ||
+      '';
+    const url = toAbsoluteUrl(href, pageUrl);
+    if (!url || isIgnoredEmbedUrl(url, pageUrl)) {
+      return;
+    }
+
+    try {
+      const parsedUrl = new URL(url);
+      const path = parsedUrl.pathname.toLowerCase();
+      if (
+        path.endsWith('/p/liv.html') ||
+        path.endsWith('/p/iframe.html') ||
+        path.includes('/p/about') ||
+        path.includes('/p/contact') ||
+        path.includes('/p/privacy') ||
+        path.includes('/p/disclaimer') ||
+        path.includes('/p/terms') ||
+        path.includes('/p/dmca') ||
+        path.includes('/p/standings')
+      ) {
+        return;
+      }
+    } catch {
+      return;
+    }
+
+    candidates.push({
+      id: `secondary-watch-page-${index + 1}`,
+      label: normalizeCandidateLabel($(element).text().trim(), `B4X Page ${index + 1}`),
+      url,
+    });
+  });
+
+  return dedupeCandidates(candidates);
+}
+
+function buildSecondaryStreamCandidate({
+  url,
+  label,
+  provider = SECONDARY_PRIVATE_SITE_PROVIDER_NAME,
+  quality = 'Auto',
+  language = 'English',
+  type,
+  notes,
+}) {
+  return {
+    id: sanitizeId(`${provider}-${label}-${url}`, 'secondary-stream'),
+    label: normalizeCandidateLabel(label, 'Secondary Feed'),
+    provider,
+    quality,
+    language,
+    type,
+    url,
+    notes,
+  };
+}
+
+function resolveSecondaryStreamsFromUrl(
+  candidateUrl,
+  candidateLabel,
+  quality = 'Auto',
+  visited = new Set()
+) {
+  const normalizedUrl = toAbsoluteUrl(candidateUrl, SECONDARY_PRIVATE_SITE_BASE_URL);
+  if (!normalizedUrl || visited.has(normalizedUrl)) {
+    return [];
+  }
+
+  const nextVisited = new Set(visited);
+  nextVisited.add(normalizedUrl);
+
+  if (looksLikeDirectMediaUrl(normalizedUrl)) {
+    return [
+      buildSecondaryStreamCandidate({
+        url: normalizedUrl,
+        label: candidateLabel,
+        quality,
+        type: normalizeStreamKind('', normalizedUrl),
+      }),
+    ];
+  }
+
+  try {
+    const parsedUrl = new URL(normalizedUrl);
+    if (parsedUrl.pathname.endsWith('/p/liv.html')) {
+      const mpdUrl = decodeUrlLikeValue(parsedUrl.searchParams.get('mpd') || '');
+      const kid = decodeUrlLikeValue(parsedUrl.searchParams.get('kid') || '');
+      const key = decodeUrlLikeValue(parsedUrl.searchParams.get('key') || '');
+
+      if (looksLikeDirectMediaUrl(mpdUrl) && !kid && !key) {
+        return [
+          buildSecondaryStreamCandidate({
+            url: mpdUrl,
+            label: candidateLabel,
+            quality,
+            type: 'dash',
+          }),
+        ];
+      }
+
+      return [
+        buildSecondaryStreamCandidate({
+          url: normalizedUrl,
+          label: `${candidateLabel} • B4X Player`,
+          quality,
+          type: 'embed',
+          notes:
+            kid && key
+              ? 'Uses the B4X embedded ClearKey player for this protected feed.'
+              : 'Uses the B4X embedded player.',
+        }),
+      ];
+    }
+
+    const nestedValues = ['url', 'src', 'file', 'stream', 'play', 'playbackUrl', 'b4x']
+      .flatMap((paramName) =>
+        parsedUrl.searchParams.getAll(paramName).map((value) => decodeUrlLikeValue(value))
+      )
+      .filter(Boolean);
+
+    const nestedStreams = dedupeCandidates(
+      nestedValues.flatMap((value) =>
+        resolveSecondaryStreamsFromUrl(value, candidateLabel, quality, nextVisited)
+      )
+    );
+    if (nestedStreams.length > 0) {
+      return nestedStreams;
+    }
+  } catch {
+    return [];
+  }
+
+  if (!isIgnoredEmbedUrl(normalizedUrl, SECONDARY_PRIVATE_SITE_BASE_URL)) {
+    return [
+      buildSecondaryStreamCandidate({
+        url: normalizedUrl,
+        label: `${candidateLabel} • Embed`,
+        quality,
+        type: 'embed',
+      }),
+    ];
+  }
+
+  return [];
+}
+
+async function resolveFromSecondaryWebsite(match, resolverQuery, timeoutMs) {
+  if (!SECONDARY_PRIVATE_SITE_ENABLED || !SECONDARY_PRIVATE_SITE_BASE_URL) {
+    return [];
+  }
+
+  const siteTimeoutMs = Math.max(1000, Math.min(timeoutMs, 4000));
+  const homeHtml = await fetchHtml(SECONDARY_PRIVATE_SITE_BASE_URL, siteTimeoutMs, 0);
+  const matchPageCandidates = extractSecondaryMatchPageCandidates(homeHtml, match, resolverQuery);
+  if (matchPageCandidates.length === 0) {
+    return [];
+  }
+
+  const matchPageUrl = matchPageCandidates[0];
+  const matchPageHtml = await fetchHtml(matchPageUrl, siteTimeoutMs, 0);
+  let watchCandidates = extractSecondaryWatchCandidates(matchPageHtml, matchPageUrl);
+
+  if (watchCandidates.length === 0) {
+    const watchPageCandidates = extractSecondaryWatchPageCandidates(matchPageHtml, matchPageUrl).slice(
+      0,
+      3
+    );
+    const watchGroups = await Promise.all(
+      watchPageCandidates.map(async (candidate) => {
+        try {
+          const watchPageHtml = await fetchHtml(candidate.url, siteTimeoutMs, 0);
+          return extractSecondaryWatchCandidates(watchPageHtml, candidate.url);
+        } catch {
+          return [];
+        }
+      })
+    );
+
+    watchCandidates = dedupeCandidates(watchGroups.flat());
+  }
+
+  if (watchCandidates.length === 0) {
+    return prioritizeStreamsForPlayback(
+      normalizeStreams(
+        await resolvePlayableCandidatesFromDocument(matchPageHtml, matchPageUrl, siteTimeoutMs)
+      )
+    );
+  }
+
+  const resolvedStreams = dedupeCandidates(
+    watchCandidates.flatMap((candidate) =>
+      resolveSecondaryStreamsFromUrl(candidate.url, candidate.label, candidate.quality)
+    )
+  );
+
+  return prioritizeStreamsForPlayback(normalizeStreams(resolvedStreams));
 }
 
 function extractEmbedCandidates(html, pageUrl) {
@@ -1010,16 +1508,18 @@ async function resolveProviderChoices(matchPageHtml, matchPageUrl, timeoutMs) {
   const providerCandidates = extractProviderPageCandidates(matchPageHtml, matchPageUrl);
 
   if (providerCandidates.length === 0) {
-    return normalizeStreams(
-      await resolvePlayableCandidatesFromDocument(matchPageHtml, matchPageUrl, timeoutMs)
+    return prioritizeStreamsForPlayback(
+      normalizeStreams(
+        await resolvePlayableCandidatesFromDocument(matchPageHtml, matchPageUrl, timeoutMs)
+      )
     );
   }
 
   if (!PRIVATE_SITE_RESOLVE_PROVIDER_PAGES) {
-    return normalizeStreams(providerCandidates);
+    return prioritizeStreamsForPlayback(normalizeStreams(providerCandidates));
   }
 
-  const providerCandidatesToResolve = providerCandidates.slice(0, PRIVATE_SITE_PROVIDER_RESOLVE_LIMIT);
+  const providerCandidatesToResolve = providerCandidates;
   const providerFetchTimeoutMs = Math.max(
     1000,
     Math.min(timeoutMs, PRIVATE_SITE_PROVIDER_FETCH_TIMEOUT_MS)
@@ -1029,6 +1529,9 @@ async function resolveProviderChoices(matchPageHtml, matchPageUrl, timeoutMs) {
     providerCandidatesToResolve.map(async (providerCandidate) => {
       try {
         const providerHtml = await fetchHtml(providerCandidate.url, providerFetchTimeoutMs, 0);
+        if (isBlockedOrUnavailableProviderPage(providerHtml, providerCandidate.url)) {
+          return [];
+        }
         const playableCandidates = await resolvePlayableCandidatesFromDocument(
           providerHtml,
           providerCandidate.url,
@@ -1060,20 +1563,22 @@ async function resolveProviderChoices(matchPageHtml, matchPageUrl, timeoutMs) {
     })
   );
 
-  const resolvedStreams = normalizeStreams(resolvedGroups.flat());
+  const resolvedStreams = prioritizeStreamsForPlayback(normalizeStreams(resolvedGroups.flat()));
   if (resolvedStreams.length > 0) {
-    const unresolvedProviderFallbacks = normalizeStreams(
-      providerCandidates.slice(providerCandidatesToResolve.length)
+    const unresolvedProviderFallbacks = prioritizeStreamsForPlayback(
+      normalizeStreams(providerCandidates.slice(providerCandidatesToResolve.length))
     );
     if (
       unresolvedProviderFallbacks.length > 0 &&
       resolvedStreams.length < PRIVATE_SITE_PROVIDER_RESOLVE_LIMIT
     ) {
-      return dedupeCandidates(
-        resolvedStreams.concat(
-          unresolvedProviderFallbacks.slice(
-            0,
-            PRIVATE_SITE_PROVIDER_RESOLVE_LIMIT - resolvedStreams.length
+      return prioritizeStreamsForPlayback(
+        dedupeCandidates(
+          resolvedStreams.concat(
+            unresolvedProviderFallbacks.slice(
+              0,
+              PRIVATE_SITE_PROVIDER_RESOLVE_LIMIT - resolvedStreams.length
+            )
           )
         )
       );
@@ -1082,7 +1587,7 @@ async function resolveProviderChoices(matchPageHtml, matchPageUrl, timeoutMs) {
     return resolvedStreams;
   }
 
-  return normalizeStreams(providerCandidates);
+  return prioritizeStreamsForPlayback(normalizeStreams(providerCandidates));
 }
 
 async function resolveFromWebsite(match, resolverQuery, timeoutMs) {
@@ -1130,17 +1635,19 @@ async function resolveFromWebsite(match, resolverQuery, timeoutMs) {
     }
   }
 
-  return normalizeStreams([
-    {
-      id: `match-page-${match.id || '1'}`,
-      label: 'Match Page',
-      provider: inferProviderName(candidatePageUrl),
-      quality: 'Auto',
-      language: 'English',
-      type: 'embed',
-      url: candidatePageUrl,
-    },
-  ]);
+  return prioritizeStreamsForPlayback(
+    normalizeStreams([
+      {
+        id: `match-page-${match.id || '1'}`,
+        label: 'Match Page',
+        provider: inferProviderName(candidatePageUrl),
+        quality: 'Auto',
+        language: 'English',
+        type: 'embed',
+        url: candidatePageUrl,
+      },
+    ])
+  );
 }
 
 export async function loadPrivateCatalog({ timeoutMs }) {
@@ -1169,7 +1676,29 @@ export async function resolvePrivateStreams({ match, resolverQuery, timeoutMs })
   }
 
   if (!RESOLVER_URL) {
-    return resolveFromWebsite(match, resolverQuery, timeoutMs);
+    const [primaryResult, secondaryResult] = await Promise.allSettled([
+      resolveFromWebsite(match, resolverQuery, timeoutMs),
+      resolveFromSecondaryWebsite(match, resolverQuery, timeoutMs),
+    ]);
+
+    const primaryStreams = primaryResult.status === 'fulfilled' ? primaryResult.value : [];
+    const secondaryStreams = secondaryResult.status === 'fulfilled' ? secondaryResult.value : [];
+    const combinedStreams = prioritizeStreamsForPlayback(
+      dedupeCandidates(primaryStreams.concat(secondaryStreams))
+    );
+
+    if (combinedStreams.length > 0) {
+      return combinedStreams;
+    }
+
+    if (primaryResult.status === 'rejected') {
+      throw primaryResult.reason;
+    }
+    if (secondaryResult.status === 'rejected') {
+      throw secondaryResult.reason;
+    }
+
+    return [];
   }
 
   const controller = new AbortController();

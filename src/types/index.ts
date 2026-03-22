@@ -23,6 +23,12 @@ export interface StreamOption {
   headers?: Record<string, string>;
 }
 
+export interface MatchStreamLookupResult {
+  streams: StreamOption[];
+  pending?: boolean;
+  message?: string;
+}
+
 export interface MatchCardData {
   id: string;
   sportId: string;

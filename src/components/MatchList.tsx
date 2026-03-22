@@ -38,6 +38,8 @@ export function MatchList({
   accentBySport,
 }: MatchListProps) {
   const cardRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const safeMatches = Array.isArray(matches) ? matches.filter(Boolean) : [];
+  const safeAccentBySport = accentBySport && typeof accentBySport === 'object' ? accentBySport : {};
 
   useEffect(() => {
     const node = cardRefs.current[selectedIndex];
@@ -46,7 +48,7 @@ export function MatchList({
       block: 'nearest',
       inline: 'center',
     });
-  }, [selectedIndex]);
+  }, [selectedIndex, safeMatches.length]);
 
   return (
     <section className="lane-section">
@@ -55,15 +57,18 @@ export function MatchList({
           <span className="lane-kicker">Browse Shelf</span>
           <h2 className="lane-title">Featured fixtures</h2>
         </div>
-        <span className="lane-meta">{matches.length} matches</span>
+        <span className="lane-meta">{safeMatches.length} matches</span>
       </div>
       <div className="match-track">
-        {matches.map((match, index) => {
+        {safeMatches.map((match, index) => {
           const selected = index === selectedIndex;
-          const cardAccent = accentBySport[match.sportId] || '#2dd4bf';
+          const cardAccent = safeAccentBySport[match.sportId] || '#2dd4bf';
           const scoreText = getCardScoreText(match);
           const hasScore = Boolean(String(match.scoreLine || '').trim());
-          const feedCount = typeof match.streamCountHint === 'number' ? match.streamCountHint : match.streams.length;
+          const matchTags = Array.isArray(match.tags) ? match.tags : [];
+          const matchStreams = Array.isArray(match.streams) ? match.streams : [];
+          const feedCount =
+            typeof match.streamCountHint === 'number' ? match.streamCountHint : matchStreams.length;
           return (
             <button
               key={match.id}
@@ -102,7 +107,7 @@ export function MatchList({
               </div>
               <div className="match-poster-tags">
                 <span className="tag-chip">{match.status === 'live' ? 'Open Sources' : 'Preview Match'}</span>
-                {match.tags.slice(0, 1).map((tag) => (
+                {matchTags.slice(0, 1).map((tag) => (
                   <span key={tag} className="tag-chip">
                     {tag}
                   </span>
