@@ -118,6 +118,29 @@ const TERTIARY_PRIVATE_SITE_MATCH_SCORE_THRESHOLD = Math.max(
   1,
   Number(process.env.TERTIARY_PRIVATE_SITE_MATCH_SCORE_THRESHOLD || 100)
 );
+const QUATERNARY_PRIVATE_SITE_ENABLED =
+  String(process.env.QUATERNARY_PRIVATE_SITE_ENABLED || 'true').toLowerCase() !== 'false';
+const QUATERNARY_PRIVATE_SITE_MATCH_LIST_API_BASE_URL =
+  process.env.QUATERNARY_PRIVATE_SITE_MATCH_LIST_API_BASE_URL || 'https://ws.kora-api.space/';
+const QUATERNARY_PRIVATE_SITE_MATCH_DETAIL_API_BASE_URL =
+  process.env.QUATERNARY_PRIVATE_SITE_MATCH_DETAIL_API_BASE_URL || 'https://ws.kora-api.top/';
+const QUATERNARY_PRIVATE_SITE_FRAME_URLS = String(
+  process.env.QUATERNARY_PRIVATE_SITE_FRAME_URLS ||
+    'https://vsys.kora-top.zip/frame.php,https://ar.kora-top.zip/frame.php,https://yalla.kora-top.zip/frame.php,https://live.kora-top.zip/frame.php,https://vip.kora-top.zip/frame.php'
+)
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean);
+const QUATERNARY_PRIVATE_SITE_PROVIDER_NAME =
+  process.env.QUATERNARY_PRIVATE_SITE_PROVIDER_NAME || 'HesGoal TV';
+const QUATERNARY_PRIVATE_SITE_MATCH_SCORE_THRESHOLD = Math.max(
+  1,
+  Number(process.env.QUATERNARY_PRIVATE_SITE_MATCH_SCORE_THRESHOLD || 100)
+);
+const QUATERNARY_PRIVATE_SITE_P_VALUE = Math.max(
+  1,
+  Number(process.env.QUATERNARY_PRIVATE_SITE_P_VALUE || 12)
+);
 const HTML_FETCH_MAX_BUFFER_BYTES = Math.max(
   1_048_576,
   Number(process.env.PRIVATE_SITE_FETCH_MAX_BUFFER_BYTES || 8_388_608)
@@ -281,6 +304,45 @@ async function fetchHtml(url, timeoutMs, maxRetries = PRIVATE_SITE_FETCH_RETRIES
     }
 
     throw lastError || new Error('Website request failed');
+  }
+}
+
+async function fetchJsonDocument(url, timeoutMs, maxRetries = PRIVATE_SITE_FETCH_RETRIES) {
+  try {
+    return JSON.parse(await fetchHtmlWithCurl(url, timeoutMs));
+  } catch (curlError) {
+    let lastError = curlError;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+      try {
+        const response = await fetch(url, {
+          headers: {
+            ...buildHtmlHeaders(),
+            Accept: 'application/json',
+          },
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`JSON request failed with status ${response.status}`);
+        }
+
+        return await response.json();
+      } catch (error) {
+        lastError = error;
+        if (attempt >= maxRetries) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    }
+
+    throw lastError || new Error('JSON request failed');
   }
 }
 
@@ -993,8 +1055,15 @@ function extractInlineMediaCandidates(html, pageUrl) {
 
 function getStreamPriority(stream) {
   const normalizedLabel = String(stream?.label || '').trim().toLowerCase();
+  const normalizedProvider = String(stream?.provider || '').trim().toLowerCase();
   if (normalizedLabel === 'match page' || normalizedLabel === 'playable page') {
     return 4;
+  }
+  if (
+    normalizedProvider === String(QUATERNARY_PRIVATE_SITE_PROVIDER_NAME).trim().toLowerCase() &&
+    stream?.kind === 'embed'
+  ) {
+    return 2.5;
   }
 
   switch (stream?.kind) {
@@ -1686,6 +1755,237 @@ async function resolveFromTertiaryWebsite(match, resolverQuery, timeoutMs) {
   return prioritizeStreamsForPlayback(normalizeStreams(resolvedStreams));
 }
 
+function formatResolverDate(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function getQuaternaryCandidateDates() {
+  const now = new Date();
+  return [
+    formatResolverDate(new Date(now.getTime() - 86_400_000)),
+    formatResolverDate(now),
+    formatResolverDate(new Date(now.getTime() + 86_400_000)),
+  ];
+}
+
+function decodeHexUrlToken(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized || normalized.length % 2 !== 0 || !/^[\da-f]+$/i.test(normalized)) {
+    return '';
+  }
+
+  try {
+    return Buffer.from(normalized, 'hex').toString('utf8').trim();
+  } catch {
+    return '';
+  }
+}
+
+function buildQuaternaryApiUrl(baseUrl, pathname, searchParams = new URLSearchParams()) {
+  const url = new URL(pathname.replace(/^\//, ''), baseUrl);
+  searchParams.forEach((value, key) => {
+    url.searchParams.set(key, value);
+  });
+  return url.toString();
+}
+
+function extractQuaternaryMatchCandidates(payload, match, resolverQuery) {
+  const candidates = [];
+  const rawMatches = Array.isArray(payload?.matches) ? payload.matches : [];
+
+  rawMatches.forEach((entry, index) => {
+    if (String(entry?.has_channels || '') !== '1') {
+      return;
+    }
+
+    const haystack = normalizeSearchText(
+      [
+        entry?.desc,
+        entry?.home_en,
+        entry?.away_en,
+        entry?.league_en,
+        entry?.date,
+        entry?.time,
+      ]
+        .filter(Boolean)
+        .join(' ')
+    );
+
+    if (!haystack) {
+      return;
+    }
+
+    candidates.push({
+      id: String(entry?.id || ''),
+      score: scoreMatchCandidate(match, resolverQuery, haystack, index) + (String(entry?.active) === '1' ? 20 : 0),
+      entry,
+    });
+  });
+
+  candidates.sort((left, right) => right.score - left.score);
+  return dedupeCandidates(
+    candidates
+      .filter((candidate) => candidate.score >= QUATERNARY_PRIVATE_SITE_MATCH_SCORE_THRESHOLD)
+      .map((candidate) => ({
+        url: `hesgoal-match-${candidate.id}`,
+        ...candidate,
+      }))
+  ).map((candidate) => candidate.entry);
+}
+
+function buildQuaternaryVisitorToken(matchId, channelId) {
+  const matchPart = String(matchId || '')
+    .replace(/\D+/g, '')
+    .slice(-8)
+    .padStart(8, '0');
+  const channelPart = String(channelId || '')
+    .replace(/\D+/g, '')
+    .slice(-4)
+    .padStart(4, '0');
+  const timePart = String(Date.now()).slice(-12).padStart(12, '0');
+
+  return `${matchPart}-${channelPart}-4000-8000-${timePart}`;
+}
+
+function buildQuaternaryFrameUrl(channel, matchId) {
+  if (QUATERNARY_PRIVATE_SITE_FRAME_URLS.length === 0) {
+    return '';
+  }
+
+  const channelIndex = Math.abs(Number.parseInt(String(channel?.id || '0'), 10) || 0);
+  const frameUrl = new URL(
+    QUATERNARY_PRIVATE_SITE_FRAME_URLS[channelIndex % QUATERNARY_PRIVATE_SITE_FRAME_URLS.length]
+  );
+  frameUrl.searchParams.set('ch', String(channel?.ch || 'main'));
+  frameUrl.searchParams.set('p', String(QUATERNARY_PRIVATE_SITE_P_VALUE));
+  frameUrl.searchParams.set('token', buildQuaternaryVisitorToken(matchId, channel?.id));
+  frameUrl.searchParams.set('kt', String(Math.floor(Date.now() / 1000)));
+  return frameUrl.toString();
+}
+
+function buildQuaternaryStreamCandidate(channel, matchId) {
+  const rawLink = String(channel?.mobile_link || channel?.link || '').trim();
+  if (!rawLink) {
+    return null;
+  }
+
+  const channelLabel = normalizeCandidateLabel(
+    channel?.server_name_en || channel?.server_name || channel?.key || channel?.ch,
+    'HesGoal Stream'
+  );
+  const quality = inferStreamQuality(channelLabel);
+  const channelType = String(channel?.type || '').trim();
+  const directTokenValue = (() => {
+    try {
+      const parsedUrl = new URL(rawLink);
+      const decodedValue = decodeUrlLikeValue(decodeHexUrlToken(parsedUrl.searchParams.get('token') || ''));
+      return looksLikeDirectMediaUrl(decodedValue) ? decodedValue : '';
+    } catch {
+      return '';
+    }
+  })();
+
+  const directUrl = directTokenValue || rawLink;
+  if (
+    looksLikeDirectMediaUrl(directUrl) ||
+    ['hls', 'dash', 'mp4'].includes(channelType.toLowerCase())
+  ) {
+    return {
+      id: sanitizeId(`hesgoal-${channel?.id || channelLabel}-${directUrl}`, 'hesgoal-stream'),
+      label: channelLabel,
+      provider: QUATERNARY_PRIVATE_SITE_PROVIDER_NAME,
+      quality,
+      language: 'English',
+      type: channelType || normalizeStreamKind('', directUrl),
+      url: directUrl,
+    };
+  }
+
+  const edge = String(channel?.edge || '');
+  const embedUrl =
+    edge === '1' && channel?.ch ? buildQuaternaryFrameUrl(channel, matchId) : toAbsoluteUrl(rawLink);
+
+  if (!embedUrl) {
+    return null;
+  }
+
+  return {
+    id: sanitizeId(`hesgoal-${channel?.id || channelLabel}-${embedUrl}`, 'hesgoal-stream'),
+    label: channelLabel,
+    provider: QUATERNARY_PRIVATE_SITE_PROVIDER_NAME,
+    quality,
+    language: 'English',
+    type: 'embed',
+    url: embedUrl,
+    notes:
+      edge === '1'
+        ? 'Resolved through the HesGoal frame host.'
+        : 'Resolved from the HesGoal channel endpoint.',
+  };
+}
+
+async function resolveFromQuaternaryWebsite(match, resolverQuery, timeoutMs) {
+  if (!QUATERNARY_PRIVATE_SITE_ENABLED || !QUATERNARY_PRIVATE_SITE_MATCH_LIST_API_BASE_URL) {
+    return [];
+  }
+
+  const apiTimeoutMs = Math.max(1000, Math.min(timeoutMs, 4000));
+  const matchPayloads = await Promise.all(
+    getQuaternaryCandidateDates().map((date) =>
+      fetchJsonDocument(
+        buildQuaternaryApiUrl(
+          QUATERNARY_PRIVATE_SITE_MATCH_LIST_API_BASE_URL,
+          `/api/matches/${date}/1`,
+          new URLSearchParams({
+            t: String(Date.now()),
+          })
+        ),
+        apiTimeoutMs,
+        0
+      ).catch(() => null)
+    )
+  );
+
+  const matchCandidates = dedupeCandidates(
+    matchPayloads
+      .filter(Boolean)
+      .flatMap((payload) => extractQuaternaryMatchCandidates(payload, match, resolverQuery))
+      .map((entry) => ({
+        url: `hesgoal-candidate-${entry.id}`,
+        ...entry,
+      }))
+  );
+
+  if (matchCandidates.length === 0) {
+    return [];
+  }
+
+  const bestCandidate = matchCandidates[0];
+  const detailPayload = await fetchJsonDocument(
+    buildQuaternaryApiUrl(
+      QUATERNARY_PRIVATE_SITE_MATCH_DETAIL_API_BASE_URL,
+      `/api/matche/${bestCandidate.id}/en`,
+      new URLSearchParams({
+        t: String(Date.now()),
+      })
+    ),
+    apiTimeoutMs,
+    0
+  );
+
+  if (String(detailPayload?.active || '') !== '1' || String(detailPayload?.has_channels || '') !== '1') {
+    return [];
+  }
+
+  const resolvedStreams = dedupeCandidates(
+    (Array.isArray(detailPayload?.channels) ? detailPayload.channels : [])
+      .map((channel) => buildQuaternaryStreamCandidate(channel, bestCandidate.id))
+      .filter(Boolean)
+  );
+
+  return prioritizeStreamsForPlayback(normalizeStreams(resolvedStreams));
+}
+
 function extractEmbedCandidates(html, pageUrl) {
   const $ = load(html);
   const candidates = [];
@@ -1999,31 +2299,38 @@ export async function resolvePrivateStreams({ match, resolverQuery, timeoutMs })
     SECONDARY_PRIVATE_SITE_ENABLED && Boolean(SECONDARY_PRIVATE_SITE_BASE_URL);
   const tertiaryPrivateSiteAvailable =
     TERTIARY_PRIVATE_SITE_ENABLED && Boolean(TERTIARY_PRIVATE_SITE_BASE_URL);
+  const quaternaryPrivateSiteAvailable =
+    QUATERNARY_PRIVATE_SITE_ENABLED &&
+    Boolean(QUATERNARY_PRIVATE_SITE_MATCH_LIST_API_BASE_URL) &&
+    Boolean(QUATERNARY_PRIVATE_SITE_MATCH_DETAIL_API_BASE_URL);
 
   if (
     !RESOLVER_URL &&
     !PRIVATE_SITE_BASE_URL &&
     !secondaryPrivateSiteAvailable &&
     !tertiaryPrivateSiteAvailable &&
+    !quaternaryPrivateSiteAvailable &&
     !resolverQuery?.pageUrl
   ) {
     throw new Error(
-      'Set STREAM_RESOLVER_URL for a JSON resolver, or configure PRIVATE_SITE_BASE_URL / SECONDARY_PRIVATE_SITE_BASE_URL / TERTIARY_PRIVATE_SITE_BASE_URL / PRIVATE_SITE_SEARCH_URL_TEMPLATE for website extraction'
+      'Set STREAM_RESOLVER_URL for a JSON resolver, or configure PRIVATE_SITE_BASE_URL / SECONDARY_PRIVATE_SITE_BASE_URL / TERTIARY_PRIVATE_SITE_BASE_URL / QUATERNARY_PRIVATE_SITE_MATCH_LIST_API_BASE_URL / PRIVATE_SITE_SEARCH_URL_TEMPLATE for website extraction'
     );
   }
 
   if (!RESOLVER_URL) {
-    const [primaryResult, secondaryResult, tertiaryResult] = await Promise.allSettled([
+    const [primaryResult, secondaryResult, tertiaryResult, quaternaryResult] = await Promise.allSettled([
       resolveFromWebsite(match, resolverQuery, timeoutMs),
       resolveFromSecondaryWebsite(match, resolverQuery, timeoutMs),
       resolveFromTertiaryWebsite(match, resolverQuery, timeoutMs),
+      resolveFromQuaternaryWebsite(match, resolverQuery, timeoutMs),
     ]);
 
     const primaryStreams = primaryResult.status === 'fulfilled' ? primaryResult.value : [];
     const secondaryStreams = secondaryResult.status === 'fulfilled' ? secondaryResult.value : [];
     const tertiaryStreams = tertiaryResult.status === 'fulfilled' ? tertiaryResult.value : [];
+    const quaternaryStreams = quaternaryResult.status === 'fulfilled' ? quaternaryResult.value : [];
     const combinedStreams = prioritizeStreamsForPlayback(
-      dedupeCandidates(primaryStreams.concat(secondaryStreams, tertiaryStreams))
+      dedupeCandidates(primaryStreams.concat(secondaryStreams, tertiaryStreams, quaternaryStreams))
     );
 
     if (combinedStreams.length > 0) {
@@ -2038,6 +2345,9 @@ export async function resolvePrivateStreams({ match, resolverQuery, timeoutMs })
     }
     if (tertiaryResult.status === 'rejected') {
       throw tertiaryResult.reason;
+    }
+    if (quaternaryResult.status === 'rejected') {
+      throw quaternaryResult.reason;
     }
 
     return [];

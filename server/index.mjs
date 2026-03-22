@@ -27,6 +27,11 @@ const tertiaryPrivateSiteEnabled =
 const tertiaryPrivateSiteBaseUrl = String(
   process.env.TERTIARY_PRIVATE_SITE_BASE_URL || 'https://www.90live.in/?m=1'
 ).trim();
+const quaternaryPrivateSiteEnabled =
+  String(process.env.QUATERNARY_PRIVATE_SITE_ENABLED || 'true').toLowerCase() !== 'false';
+const quaternaryPrivateSiteMatchListApiBaseUrl = String(
+  process.env.QUATERNARY_PRIVATE_SITE_MATCH_LIST_API_BASE_URL || 'https://ws.kora-api.space/'
+).trim();
 const streamResolverUrl = String(process.env.STREAM_RESOLVER_URL || '').trim();
 let cachedCatalog = null;
 let cachedCatalogExpiresAt = 0;
@@ -468,11 +473,15 @@ const server = createServer(async (request, response) => {
       tertiaryPrivateSiteConfigured: Boolean(
         tertiaryPrivateSiteEnabled && tertiaryPrivateSiteBaseUrl
       ),
+      quaternaryPrivateSiteConfigured: Boolean(
+        quaternaryPrivateSiteEnabled && quaternaryPrivateSiteMatchListApiBaseUrl
+      ),
       resolverConfigured: Boolean(
         streamResolverUrl ||
           privateSiteBaseUrl ||
           secondaryPrivateSiteBaseUrl ||
-          (tertiaryPrivateSiteEnabled && tertiaryPrivateSiteBaseUrl)
+          (tertiaryPrivateSiteEnabled && tertiaryPrivateSiteBaseUrl) ||
+          (quaternaryPrivateSiteEnabled && quaternaryPrivateSiteMatchListApiBaseUrl)
       ),
       catalogCached: Boolean(cachedCatalog),
       catalogRefreshInFlight: Boolean(catalogRefreshPromise),
@@ -562,7 +571,10 @@ server.listen(port, '0.0.0.0', () => {
     (privateSiteBaseUrl ? 'private source catalog' : 'manual catalog');
   const resolverLabel =
     streamResolverUrl ||
-    (privateSiteBaseUrl || secondaryPrivateSiteBaseUrl || (tertiaryPrivateSiteEnabled && tertiaryPrivateSiteBaseUrl)
+    (privateSiteBaseUrl ||
+    secondaryPrivateSiteBaseUrl ||
+    (tertiaryPrivateSiteEnabled && tertiaryPrivateSiteBaseUrl) ||
+    (quaternaryPrivateSiteEnabled && quaternaryPrivateSiteMatchListApiBaseUrl)
       ? 'private site resolver'
       : 'embedded demo streams');
   console.log(`sportzx API listening on http://127.0.0.1:${port} using ${sourceLabel} and ${resolverLabel}`);
