@@ -2,9 +2,9 @@ import { mockCatalog } from '../data/mockData';
 import type { MatchCardData, MatchStreamLookupResult, SportsCatalog, StreamOption } from '../types';
 
 const apiBaseUrl = import.meta.env.VITE_SPORTS_API_BASE_URL?.trim();
-const streamRequestRetries = 2;
+const streamRequestRetries = 0;
 const catalogRequestTimeoutMs = 9000;
-const streamRequestTimeoutMs = 10000;
+const streamRequestTimeoutMs = 35000;
 const streamLookupCacheTtlMs = 180000;
 const knownPopupDomains = [
   'increasecattle.net',

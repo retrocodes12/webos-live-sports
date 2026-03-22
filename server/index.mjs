@@ -19,6 +19,7 @@ const upstreamCatalogUrlTemplate = String(process.env.UPSTREAM_CATALOG_URL || ''
 const upstreamTimeoutMs = Number(process.env.UPSTREAM_TIMEOUT_MS || 12000);
 const catalogCacheTtlMs = Math.max(0, Number(process.env.CATALOG_CACHE_TTL_MS || 60000));
 const streamCacheTtlMs = Math.max(0, Number(process.env.STREAM_CACHE_TTL_MS || 300000));
+const streamPrefetchMatchLimit = Math.max(0, Number(process.env.STREAM_PREFETCH_MATCH_LIMIT || 3));
 const streamResolveRetries = Math.max(0, Number(process.env.STREAM_RESOLVE_RETRIES || 0));
 const privateSiteBaseUrl = String(process.env.PRIVATE_SITE_BASE_URL || '').trim();
 const secondaryPrivateSiteBaseUrl = String(process.env.SECONDARY_PRIVATE_SITE_BASE_URL || '').trim();
@@ -350,6 +351,7 @@ async function fetchCatalog({ allowStaleOnError = false } = {}) {
     cachedCatalogLoadedAt = Date.now();
     cachedCatalogExpiresAt = cachedCatalogLoadedAt + catalogCacheTtlMs;
     catalogLastError = '';
+    prefetchPreferredStreams(catalog);
     return catalog;
   })()
     .catch((error) => {
@@ -449,6 +451,45 @@ function resolveAndCacheStreams(matchId, match) {
 
   streamResolutionPromisesByMatchId.set(matchId, resolutionPromise);
   return resolutionPromise;
+}
+
+function getStreamPrefetchPriority(match) {
+  if (match?.status === 'live') {
+    return 0;
+  }
+  if (match?.status === 'upcoming') {
+    return 1;
+  }
+  return 2;
+}
+
+function prefetchPreferredStreams(catalog) {
+  if (!streamPrefetchMatchLimit || !catalog || !Array.isArray(catalog.matches)) {
+    return;
+  }
+
+  const candidates = catalog.matches
+    .map((match, index) => ({ match, index }))
+    .filter(({ match }) => match && match.status !== 'ended')
+    .sort((left, right) => {
+      const priorityDelta =
+        getStreamPrefetchPriority(left.match) - getStreamPrefetchPriority(right.match);
+      if (priorityDelta !== 0) {
+        return priorityDelta;
+      }
+
+      return left.index - right.index;
+    })
+    .map(({ match }) => match)
+    .slice(0, streamPrefetchMatchLimit);
+
+  candidates.forEach((match) => {
+    if (getCachedStreams(match.id) || streamResolutionPromisesByMatchId.has(match.id)) {
+      return;
+    }
+
+    void resolveAndCacheStreams(match.id, match).catch(() => {});
+  });
 }
 
 function shouldTreatStreamLookupAsPending(match, error) {
