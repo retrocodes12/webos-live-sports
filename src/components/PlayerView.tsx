@@ -130,9 +130,6 @@ export function PlayerView({ match, stream }: PlayerViewProps) {
             onLoad={() => {
               setIsReady(true);
               setPlaybackError('');
-              requestAnimationFrame(() => {
-                iframeRef.current?.focus();
-              });
             }}
           />
         ) : (

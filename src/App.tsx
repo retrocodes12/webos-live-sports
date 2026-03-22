@@ -60,6 +60,20 @@ export default function App() {
   const selectedSportIdRef = useRef('');
   const selectedMatchIdRef = useRef('');
 
+  function handleBackNavigation() {
+    if (screenRef.current === 'player') {
+      setScreen('detail');
+      return true;
+    }
+
+    if (screenRef.current === 'detail') {
+      setScreen('home');
+      return true;
+    }
+
+    return true;
+  }
+
   useEffect(() => {
     catalogRef.current = catalog;
   }, [catalog]);
@@ -326,6 +340,28 @@ export default function App() {
   }, [screen, selectedMatch, selectedMatchLookupNonce]);
 
   useEffect(() => {
+    if (typeof window.history?.pushState !== 'function') {
+      return;
+    }
+
+    const stateKey = 'sportzx-app-shell';
+    const stateValue = { [stateKey]: true };
+
+    window.history.replaceState(stateValue, '', window.location.href);
+    window.history.pushState(stateValue, '', window.location.href);
+
+    const handlePopState = () => {
+      handleBackNavigation();
+      window.history.pushState(stateValue, '', window.location.href);
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, []);
+
+  useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const key = event.key;
       const isBack = isBackIntent(event);
@@ -333,11 +369,8 @@ export default function App() {
 
       if (isBack) {
         event.preventDefault();
-        if (screen === 'player') {
-          setScreen('detail');
-        } else if (screen === 'detail') {
-          setScreen('home');
-        }
+        event.stopPropagation();
+        handleBackNavigation();
         return;
       }
 
