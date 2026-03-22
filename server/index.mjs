@@ -22,6 +22,11 @@ const streamCacheTtlMs = Math.max(0, Number(process.env.STREAM_CACHE_TTL_MS || 3
 const streamResolveRetries = Math.max(0, Number(process.env.STREAM_RESOLVE_RETRIES || 0));
 const privateSiteBaseUrl = String(process.env.PRIVATE_SITE_BASE_URL || '').trim();
 const secondaryPrivateSiteBaseUrl = String(process.env.SECONDARY_PRIVATE_SITE_BASE_URL || '').trim();
+const tertiaryPrivateSiteEnabled =
+  String(process.env.TERTIARY_PRIVATE_SITE_ENABLED || '').toLowerCase() !== 'false';
+const tertiaryPrivateSiteBaseUrl = String(
+  process.env.TERTIARY_PRIVATE_SITE_BASE_URL || 'https://www.90live.in/?m=1'
+).trim();
 const streamResolverUrl = String(process.env.STREAM_RESOLVER_URL || '').trim();
 let cachedCatalog = null;
 let cachedCatalogExpiresAt = 0;
@@ -460,7 +465,15 @@ const server = createServer(async (request, response) => {
       upstreamConfigured: Boolean(upstreamCatalogUrlTemplate),
       privateSiteConfigured: Boolean(privateSiteBaseUrl),
       secondaryPrivateSiteConfigured: Boolean(secondaryPrivateSiteBaseUrl),
-      resolverConfigured: Boolean(streamResolverUrl || privateSiteBaseUrl || secondaryPrivateSiteBaseUrl),
+      tertiaryPrivateSiteConfigured: Boolean(
+        tertiaryPrivateSiteEnabled && tertiaryPrivateSiteBaseUrl
+      ),
+      resolverConfigured: Boolean(
+        streamResolverUrl ||
+          privateSiteBaseUrl ||
+          secondaryPrivateSiteBaseUrl ||
+          (tertiaryPrivateSiteEnabled && tertiaryPrivateSiteBaseUrl)
+      ),
       catalogCached: Boolean(cachedCatalog),
       catalogRefreshInFlight: Boolean(catalogRefreshPromise),
       catalogCacheAgeMs: cachedCatalogLoadedAt ? Date.now() - cachedCatalogLoadedAt : null,
@@ -548,7 +561,10 @@ server.listen(port, '0.0.0.0', () => {
     resolveUpstreamCatalogUrl() ||
     (privateSiteBaseUrl ? 'private source catalog' : 'manual catalog');
   const resolverLabel =
-    streamResolverUrl || (privateSiteBaseUrl ? 'private site resolver' : 'embedded demo streams');
+    streamResolverUrl ||
+    (privateSiteBaseUrl || secondaryPrivateSiteBaseUrl || (tertiaryPrivateSiteEnabled && tertiaryPrivateSiteBaseUrl)
+      ? 'private site resolver'
+      : 'embedded demo streams');
   console.log(`sportzx API listening on http://127.0.0.1:${port} using ${sourceLabel} and ${resolverLabel}`);
   refreshCatalogInBackground();
 });
