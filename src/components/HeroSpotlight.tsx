@@ -1,3 +1,5 @@
+import { memo } from 'react';
+
 import { TeamCrest } from './TeamCrest';
 import type { MatchCardData, StreamOption } from '../types';
 
@@ -23,7 +25,7 @@ function getDisplayScore(match: MatchCardData) {
   return String(match.scoreLine || '').trim();
 }
 
-export function HeroSpotlight({
+export const HeroSpotlight = memo(function HeroSpotlight({
   match,
   accent,
   streamCount,
@@ -113,4 +115,4 @@ export function HeroSpotlight({
       </div>
     </section>
   );
-}
+});

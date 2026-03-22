@@ -1,3 +1,5 @@
+import { memo } from 'react';
+
 import { BrandLogo } from './BrandLogo';
 import type { SportCategory } from '../types';
 
@@ -13,7 +15,43 @@ interface SportsColumnProps {
   syncLabel: string;
 }
 
-export function SportsColumn({
+interface SportTileProps {
+  sport: SportCategory;
+  active: boolean;
+  focused: boolean;
+}
+
+const SportTile = memo(function SportTile({ sport, active, focused }: SportTileProps) {
+  return (
+    <button
+      type="button"
+      className={`sidebar-tile${active ? ' is-active' : ''}${focused ? ' is-focused' : ''}`}
+      style={{ ['--accent' as string]: sport.accent }}
+    >
+      <span className="sidebar-tile-icon">
+        {sport.logoUrl ? (
+          <img
+            className="sidebar-tile-logo"
+            src={sport.logoUrl}
+            alt=""
+            aria-hidden="true"
+            loading="lazy"
+            decoding="async"
+            draggable={false}
+          />
+        ) : (
+          sport.shortLabel
+        )}
+      </span>
+      <span className="sidebar-tile-copy">
+        <span className="sidebar-tile-name">{sport.name}</span>
+        <span className="sidebar-tile-meta">{active ? 'Selected' : 'Browse'}</span>
+      </span>
+    </button>
+  );
+});
+
+export const SportsColumn = memo(function SportsColumn({
   sports,
   selectedSportId,
   selectedIndex,
@@ -57,34 +95,14 @@ export function SportsColumn({
         <div className="sidebar-list">
           {sports.map((sport, index) => {
             const active = sport.id === selectedSportId;
-            const focused = isFocused && index === selectedIndex;
+            const tileFocused = isFocused && index === selectedIndex;
             return (
-              <button
+              <SportTile
                 key={sport.id}
-                type="button"
-                className={`sidebar-tile${active ? ' is-active' : ''}${focused ? ' is-focused' : ''}`}
-                style={{ ['--accent' as string]: sport.accent }}
-              >
-                <span className="sidebar-tile-icon">
-                  {sport.logoUrl ? (
-                    <img
-                      className="sidebar-tile-logo"
-                      src={sport.logoUrl}
-                      alt=""
-                      aria-hidden="true"
-                      loading="lazy"
-                      decoding="async"
-                      draggable={false}
-                    />
-                  ) : (
-                    sport.shortLabel
-                  )}
-                </span>
-                <span className="sidebar-tile-copy">
-                  <span className="sidebar-tile-name">{sport.name}</span>
-                  <span className="sidebar-tile-meta">{active ? 'Selected' : 'Browse'}</span>
-                </span>
-              </button>
+                sport={sport}
+                active={active}
+                focused={tileFocused}
+              />
             );
           })}
         </div>
@@ -96,4 +114,4 @@ export function SportsColumn({
       </div>
     </aside>
   );
-}
+});

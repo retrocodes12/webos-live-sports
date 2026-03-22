@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { memo, useState } from 'react';
 
 interface TeamCrestProps {
   name: string;
@@ -18,7 +18,7 @@ function buildMonogram(name: string) {
   return parts.map((part) => part[0]?.toUpperCase() || '').join('');
 }
 
-export function TeamCrest({
+export const TeamCrest = memo(function TeamCrest({
   name,
   logoUrl,
   size = 'md',
@@ -46,4 +46,4 @@ export function TeamCrest({
       )}
     </span>
   );
-}
+});

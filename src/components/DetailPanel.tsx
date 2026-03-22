@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { memo, type Ref, useEffect, useRef } from 'react';
 
 import type { MatchCardData, StreamOption } from '../types';
 import { getPreferredScrollBehavior } from '../utils/platform';
@@ -13,7 +13,45 @@ interface DetailPanelProps {
   canRetry?: boolean;
 }
 
-export function DetailPanel({
+interface StreamCardProps {
+  stream: StreamOption;
+  selected: boolean;
+  streamsFocused: boolean;
+  streamRef?: Ref<HTMLDivElement>;
+}
+
+const StreamCard = memo(function StreamCard({
+  stream,
+  selected,
+  streamsFocused,
+  streamRef,
+}: StreamCardProps) {
+  return (
+    <div
+      ref={streamRef}
+      className={`stream-card${selected ? ' is-selected' : ''}${streamsFocused && selected ? ' is-focused' : ''}`}
+    >
+      <div className="stream-card-topline">
+        <strong>{stream.label}</strong>
+        <span className="stream-quality">{stream.quality}</span>
+      </div>
+      <div className="stream-card-body">
+        <div>
+          <div className="stream-card-provider">{stream.provider}</div>
+          <p className="stream-card-note">
+            {stream.notes || 'Provider lane ready. Open this feed to attempt playback.'}
+          </p>
+        </div>
+        <div className="stream-card-tags">
+          <span className="stream-tag">{stream.language}</span>
+          <span className="stream-tag">{stream.kind.toUpperCase()}</span>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+export const DetailPanel = memo(function DetailPanel({
   match,
   streamIndex,
   streamsFocused,
@@ -22,19 +60,19 @@ export function DetailPanel({
   streamError = '',
   canRetry = false,
 }: DetailPanelProps) {
-  const streamRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const selectedStreamRef = useRef<HTMLDivElement | null>(null);
   const matchStreams = Array.isArray(match.streams) ? match.streams : [];
   const streamCount = matchStreams.length > 0 ? matchStreams.length : match.streamCountHint || 0;
   const streamHeading = isLoadingStreams && streamCount === 0 ? 'Resolving...' : `${streamCount} feeds`;
 
   useEffect(() => {
-    const node = streamRefs.current[streamIndex];
+    const node = selectedStreamRef.current;
     node?.scrollIntoView({
       behavior: getPreferredScrollBehavior(),
       block: 'nearest',
       inline: 'center',
     });
-  }, [streamIndex]);
+  }, [streamIndex, matchStreams.length]);
 
   return (
     <section className="sources-panel" style={{ ['--accent' as string]: accent }}>
@@ -80,33 +118,16 @@ export function DetailPanel({
         {matchStreams.map((stream, index) => {
           const selected = index === streamIndex;
           return (
-            <div
+            <StreamCard
               key={stream.id}
-              ref={(node) => {
-                streamRefs.current[index] = node;
-              }}
-              className={`stream-card${selected ? ' is-selected' : ''}${streamsFocused && selected ? ' is-focused' : ''}`}
-            >
-              <div className="stream-card-topline">
-                <strong>{stream.label}</strong>
-                <span className="stream-quality">{stream.quality}</span>
-              </div>
-              <div className="stream-card-body">
-                <div>
-                  <div className="stream-card-provider">{stream.provider}</div>
-                  <p className="stream-card-note">
-                    {stream.notes || 'Provider lane ready. Open this feed to attempt playback.'}
-                  </p>
-                </div>
-                <div className="stream-card-tags">
-                  <span className="stream-tag">{stream.language}</span>
-                  <span className="stream-tag">{stream.kind.toUpperCase()}</span>
-                </div>
-              </div>
-            </div>
+              stream={stream}
+              selected={selected}
+              streamsFocused={streamsFocused}
+              streamRef={selected ? selectedStreamRef : undefined}
+            />
           );
         })}
       </div>
     </section>
   );
-}
+});

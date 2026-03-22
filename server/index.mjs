@@ -39,6 +39,7 @@ let cachedCatalogLoadedAt = 0;
 let catalogRefreshPromise = null;
 let catalogLastError = '';
 const cachedStreamsByMatchId = new Map();
+const streamResolutionPromisesByMatchId = new Map();
 
 function normalizeMatchName(value) {
   const genericTokens = new Set([
@@ -426,6 +427,30 @@ function setCachedStreams(matchId, streams) {
   });
 }
 
+function resolveAndCacheStreams(matchId, match) {
+  const cachedStreams = getCachedStreams(matchId);
+  if (cachedStreams) {
+    return Promise.resolve(cachedStreams);
+  }
+
+  const inFlightResolution = streamResolutionPromisesByMatchId.get(matchId);
+  if (inFlightResolution) {
+    return inFlightResolution;
+  }
+
+  const resolutionPromise = resolveMatchStreams(match)
+    .then((streams) => {
+      setCachedStreams(matchId, streams);
+      return streams;
+    })
+    .finally(() => {
+      streamResolutionPromisesByMatchId.delete(matchId);
+    });
+
+  streamResolutionPromisesByMatchId.set(matchId, resolutionPromise);
+  return resolutionPromise;
+}
+
 function shouldTreatStreamLookupAsPending(match, error) {
   if (!match || match.status !== 'upcoming') {
     return false;
@@ -531,8 +556,7 @@ const server = createServer(async (request, response) => {
         return;
       }
 
-      const streams = await resolveMatchStreams(match);
-      setCachedStreams(matchId, streams);
+      const streams = await resolveAndCacheStreams(matchId, match);
 
       sendJson(response, 200, { streams });
     } catch (error) {

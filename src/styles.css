@@ -42,6 +42,10 @@ body {
   overflow: hidden;
 }
 
+html.webos-runtime body {
+  background: linear-gradient(180deg, #071018 0%, #09131c 42%, #050b11 100%);
+}
+
 button {
   appearance: none;
   background: none;
@@ -93,6 +97,10 @@ code {
   position: absolute;
 }
 
+.app-shell--tv::before {
+  opacity: 0.12;
+}
+
 .player-shell {
   padding-bottom: 20px;
 }
@@ -124,6 +132,11 @@ code {
   height: 32rem;
   left: -12rem;
   width: 32rem;
+}
+
+html.webos-runtime .app-orb {
+  filter: blur(8px);
+  opacity: 0.65;
 }
 
 .app-header,
@@ -330,6 +343,21 @@ code {
   animation: surface-in 260ms cubic-bezier(0.18, 0.82, 0.24, 1);
 }
 
+html.webos-runtime .sidebar-surface,
+html.webos-runtime .lane-section,
+html.webos-runtime .hero-spotlight,
+html.webos-runtime .sources-panel,
+html.webos-runtime .panel,
+html.webos-runtime .loading-panel,
+html.webos-runtime .error-panel,
+html.webos-runtime .player-frame,
+html.webos-runtime .player-help {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  animation: none;
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.28);
+}
+
 .sidebar-surface,
 .lane-section,
 .sources-panel,
@@ -442,6 +470,10 @@ code {
     transform 180ms ease;
 }
 
+html.webos-runtime .sidebar-tile {
+  transition: none;
+}
+
 .sidebar-tile.is-active {
   background: linear-gradient(135deg, #f4f7fb, #dbe9f3);
   color: #121822;
@@ -456,6 +488,10 @@ code {
 
 .sidebar-tile.is-active.is-focused {
   background: linear-gradient(135deg, #f4f7fb, #dbe9f3);
+}
+
+html.webos-runtime .sidebar-tile.is-focused {
+  transform: none;
 }
 
 .sidebar-tile-icon {
@@ -473,6 +509,10 @@ code {
   letter-spacing: 0.08em;
   min-width: 40px;
   padding: 0 10px;
+}
+
+html.webos-runtime .sidebar-tile-icon {
+  background: rgba(36, 50, 65, 0.92);
 }
 
 .sidebar-tile-logo {
@@ -537,6 +577,12 @@ code {
     linear-gradient(135deg, rgba(255, 255, 255, 0.03), transparent 60%);
   inset: 0;
   position: absolute;
+}
+
+html.webos-runtime .hero-wash {
+  background:
+    linear-gradient(90deg, rgba(5, 8, 13, 0.94) 0%, rgba(5, 8, 13, 0.84) 54%, rgba(5, 8, 13, 0.48) 100%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.03), transparent 60%);
 }
 
 .hero-copy,
@@ -746,6 +792,11 @@ code {
   scrollbar-width: none;
 }
 
+html.webos-runtime .match-track,
+html.webos-runtime .stream-track {
+  scroll-snap-type: none;
+}
+
 .match-track::-webkit-scrollbar,
 .stream-track::-webkit-scrollbar {
   display: none;
@@ -775,6 +826,10 @@ code {
   width: 312px;
 }
 
+html.webos-runtime .match-poster {
+  transition: none;
+}
+
 .match-poster.is-selected {
   background:
     linear-gradient(180deg, rgba(34, 211, 238, 0.12), transparent 54%),
@@ -787,6 +842,10 @@ code {
   border-color: var(--focus-ring);
   box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.16), 0 22px 48px rgba(5, 10, 16, 0.26);
   transform: translateY(-4px) scale(1.012);
+}
+
+html.webos-runtime .match-poster.is-focused {
+  transform: none;
 }
 
 .match-poster-topline {
@@ -896,6 +955,10 @@ code {
     box-shadow 180ms ease;
 }
 
+html.webos-runtime .stream-card {
+  transition: none;
+}
+
 .stream-card.is-selected {
   background:
     linear-gradient(180deg, rgba(34, 211, 238, 0.12), rgba(255, 255, 255, 0.03)),
@@ -907,6 +970,10 @@ code {
   border-color: var(--focus-ring);
   box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.16), 0 20px 42px rgba(5, 10, 16, 0.24);
   transform: translateY(-4px);
+}
+
+html.webos-runtime .stream-card.is-focused {
+  transform: none;
 }
 
 .stream-card-topline {

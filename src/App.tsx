@@ -6,9 +6,14 @@ import { HeroSpotlight } from './components/HeroSpotlight';
 import { MatchList } from './components/MatchList';
 import { PlayerView } from './components/PlayerView';
 import { SportsColumn } from './components/SportsColumn';
-import { loadMatchStreams, loadSportsCatalog } from './services/api';
+import {
+  invalidateMatchStreams,
+  loadMatchStreams,
+  loadSportsCatalog,
+  preloadMatchStreams,
+} from './services/api';
 import type { SportsCatalog, StreamOption } from './types';
-import { isBackIntent } from './utils/platform';
+import { isBackIntent, isLikelyWebOsRuntime } from './utils/platform';
 
 type Screen = 'home' | 'detail' | 'player';
 type HomeFocusArea = 'sports' | 'matches';
@@ -19,6 +24,25 @@ const EMPTY_CATALOG: SportsCatalog = {
   matches: [],
 };
 const CATALOG_REFRESH_INTERVAL_MS = 30000;
+const STREAM_PREFETCH_DELAY_MS = 220;
+const ADJACENT_STREAM_PREFETCH_DELAY_MS = 650;
+const EMPTY_STREAMS: StreamOption[] = [];
+
+interface NavigationSnapshot {
+  safeScreen: Screen;
+  homeFocusArea: HomeFocusArea;
+  detailFocusArea: DetailFocusArea;
+  hasMatch: boolean;
+  sportsLength: number;
+  filteredMatchesLength: number;
+  selectedMatchIndex: number;
+  selectedStreamIndex: number;
+  selectedMatchId: string;
+  selectedMatchStreamsLength: number;
+  selectedStreamKind: StreamOption['kind'] | null;
+  hasSelectedStream: boolean;
+  canRetrySelectedMatchLookup: boolean;
+}
 
 function formatClockLabel(timestamp = Date.now()) {
   return new Intl.DateTimeFormat('en-US', {
@@ -59,6 +83,22 @@ export default function App() {
   const catalogRequestInFlightRef = useRef(false);
   const selectedSportIdRef = useRef('');
   const selectedMatchIdRef = useRef('');
+  const navigationStateRef = useRef<NavigationSnapshot>({
+    safeScreen: 'home',
+    homeFocusArea: 'matches',
+    detailFocusArea: 'streams',
+    hasMatch: false,
+    sportsLength: 0,
+    filteredMatchesLength: 0,
+    selectedMatchIndex: 0,
+    selectedStreamIndex: 0,
+    selectedMatchId: '',
+    selectedMatchStreamsLength: 0,
+    selectedStreamKind: null,
+    hasSelectedStream: false,
+    canRetrySelectedMatchLookup: false,
+  });
+  const isTvRuntime = useMemo(() => isLikelyWebOsRuntime(), []);
 
   function handleBackNavigation() {
     if (screenRef.current === 'player') {
@@ -75,12 +115,11 @@ export default function App() {
   }
 
   useEffect(() => {
-    catalogRef.current = catalog;
-  }, [catalog]);
-
-  useEffect(() => {
-    screenRef.current = screen;
-  }, [screen]);
+    document.documentElement.classList.toggle('webos-runtime', isTvRuntime);
+    return () => {
+      document.documentElement.classList.remove('webos-runtime');
+    };
+  }, [isTvRuntime]);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -106,17 +145,21 @@ export default function App() {
   const selectedMatchLookupNonce = selectedMatch
     ? streamLookupNonceByMatchId[selectedMatch.id] || 0
     : 0;
-  const hasResolvedSelectedMatchStreams = selectedMatch
-    ? Object.prototype.hasOwnProperty.call(streamsByMatchId, selectedMatch.id)
-    : false;
-  const selectedMatchStreams = selectedMatch
-    ? hasResolvedSelectedMatchStreams
-      ? streamsByMatchId[selectedMatch.id]
-      : selectedMatch.streams || []
-    : [];
-  const selectedMatchView = selectedMatch
-    ? { ...selectedMatch, streams: selectedMatchStreams }
-    : null;
+  const selectedMatchStreams = useMemo(() => {
+    if (!selectedMatch) {
+      return EMPTY_STREAMS;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(streamsByMatchId, selectedMatch.id)) {
+      return streamsByMatchId[selectedMatch.id] || EMPTY_STREAMS;
+    }
+
+    return selectedMatch.streams || EMPTY_STREAMS;
+  }, [selectedMatch, streamsByMatchId]);
+  const selectedMatchView = useMemo(
+    () => (selectedMatch ? { ...selectedMatch, streams: selectedMatchStreams } : null),
+    [selectedMatch, selectedMatchStreams]
+  );
   const selectedStream = selectedMatchStreams[selectedStreamIndex] || selectedMatchStreams[0] || null;
   const safeScreen: Screen = screen === 'player' && !selectedStream ? 'detail' : screen;
 
@@ -125,14 +168,6 @@ export default function App() {
       setScreen(selectedMatch ? 'detail' : 'home');
     }
   }, [screen, selectedMatch, selectedStream]);
-
-  useEffect(() => {
-    selectedSportIdRef.current = selectedSport?.id || '';
-  }, [selectedSport?.id]);
-
-  useEffect(() => {
-    selectedMatchIdRef.current = selectedMatch?.id || '';
-  }, [selectedMatch?.id]);
 
   const accentBySport = useMemo(
     () =>
@@ -143,12 +178,19 @@ export default function App() {
     [sports]
   );
   const selectedAccent = selectedMatch ? accentBySport[selectedMatch.sportId] || '#6f7cff' : '#6f7cff';
-  const liveCount = useMemo(
-    () => catalog.matches.filter((match) => match.status === 'live').length,
-    [catalog.matches]
-  );
-  const upcomingCount = useMemo(
-    () => catalog.matches.filter((match) => match.status === 'upcoming').length,
+  const { liveCount, upcomingCount } = useMemo(
+    () =>
+      catalog.matches.reduce(
+        (totals, match) => {
+          if (match.status === 'live') {
+            totals.liveCount += 1;
+          } else if (match.status === 'upcoming') {
+            totals.upcomingCount += 1;
+          }
+          return totals;
+        },
+        { liveCount: 0, upcomingCount: 0 }
+      ),
     [catalog.matches]
   );
   const endedCount = Math.max(0, catalog.matches.length - liveCount - upcomingCount);
@@ -170,7 +212,28 @@ export default function App() {
     (!selectedMatchStreams.length || streamErrorsByMatchId[selectedMatch.id])
   );
 
+  catalogRef.current = catalog;
+  screenRef.current = screen;
+  selectedSportIdRef.current = selectedSport?.id || '';
+  selectedMatchIdRef.current = selectedMatch?.id || '';
+  navigationStateRef.current = {
+    safeScreen,
+    homeFocusArea,
+    detailFocusArea,
+    hasMatch: Boolean(selectedMatch),
+    sportsLength: sports.length,
+    filteredMatchesLength: filteredMatches.length,
+    selectedMatchIndex,
+    selectedStreamIndex,
+    selectedMatchId: selectedMatch?.id || '',
+    selectedMatchStreamsLength: selectedMatchStreams.length,
+    selectedStreamKind: selectedStream?.kind || null,
+    hasSelectedStream: Boolean(selectedStream),
+    canRetrySelectedMatchLookup,
+  };
+
   function retryStreamsForMatch(matchId: string) {
+    invalidateMatchStreams(matchId);
     setStreamsByMatchId((current) => {
       const next = { ...current };
       delete next[matchId];
@@ -319,13 +382,17 @@ export default function App() {
       try {
         setLoadingStreamMatchIds((current) => ({ ...current, [selectedMatch.id]: true }));
         setStreamErrorsByMatchId((current) => ({ ...current, [selectedMatch.id]: '' }));
-        const lookupResult = await loadMatchStreams(selectedMatch.id);
+        const lookupResult = await loadMatchStreams(selectedMatch.id, {
+          force: selectedMatchLookupNonce > 0,
+        });
         if (!cancelled) {
-          setStreamsByMatchId((current) => ({
-            ...current,
-            [selectedMatch.id]: lookupResult.streams,
-          }));
-          setStreamLookupDoneByMatchId((current) => ({ ...current, [selectedMatch.id]: true }));
+          startTransition(() => {
+            setStreamsByMatchId((current) => ({
+              ...current,
+              [selectedMatch.id]: lookupResult.streams,
+            }));
+            setStreamLookupDoneByMatchId((current) => ({ ...current, [selectedMatch.id]: true }));
+          });
         }
       } catch (nextError) {
         if (!cancelled) {
@@ -348,6 +415,80 @@ export default function App() {
       cancelled = true;
     };
   }, [screen, selectedMatch, selectedMatchLookupNonce]);
+
+  useEffect(() => {
+    if (!selectedMatch) {
+      return;
+    }
+
+    if ((selectedMatch.streams || []).length > 0 || streamLookupDoneByMatchId[selectedMatch.id]) {
+      return;
+    }
+
+    if (loadingStreamMatchIds[selectedMatch.id] || safeScreen === 'player') {
+      return;
+    }
+
+    let cancelled = false;
+    const prefetchMatchId = selectedMatch.id;
+    const prefetchTimerId = window.setTimeout(() => {
+      void loadMatchStreams(prefetchMatchId)
+        .then((lookupResult) => {
+          if (cancelled) {
+            return;
+          }
+
+          startTransition(() => {
+            setStreamsByMatchId((current) =>
+              current[prefetchMatchId] === lookupResult.streams
+                ? current
+                : {
+                    ...current,
+                    [prefetchMatchId]: lookupResult.streams,
+                  }
+            );
+            setStreamLookupDoneByMatchId((current) =>
+              current[prefetchMatchId]
+                ? current
+                : {
+                    ...current,
+                    [prefetchMatchId]: true,
+                  }
+            );
+          });
+        })
+        .catch(() => {});
+    }, safeScreen === 'home' ? STREAM_PREFETCH_DELAY_MS : 0);
+
+    const adjacentMatch = filteredMatches[selectedMatchIndex + 1] || null;
+    const shouldPrefetchAdjacentMatch =
+      safeScreen === 'home' &&
+      adjacentMatch &&
+      !(adjacentMatch.streams || []).length &&
+      !streamLookupDoneByMatchId[adjacentMatch.id];
+    const adjacentPrefetchTimerId = shouldPrefetchAdjacentMatch
+      ? window.setTimeout(() => {
+          if (!cancelled && adjacentMatch) {
+            void preloadMatchStreams(adjacentMatch.id);
+          }
+        }, ADJACENT_STREAM_PREFETCH_DELAY_MS)
+      : 0;
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(prefetchTimerId);
+      if (adjacentPrefetchTimerId) {
+        window.clearTimeout(adjacentPrefetchTimerId);
+      }
+    };
+  }, [
+    filteredMatches,
+    loadingStreamMatchIds,
+    safeScreen,
+    selectedMatch,
+    selectedMatchIndex,
+    streamLookupDoneByMatchId,
+  ]);
 
   useEffect(() => {
     if (typeof window.history?.pushState !== 'function') {
@@ -375,7 +516,20 @@ export default function App() {
     const handleKeyDown = (event: KeyboardEvent) => {
       const key = event.key;
       const isBack = isBackIntent(event);
-      const hasMatch = Boolean(selectedMatch);
+      const {
+        safeScreen: currentScreen,
+        homeFocusArea: currentHomeFocusArea,
+        detailFocusArea: currentDetailFocusArea,
+        hasMatch,
+        sportsLength,
+        filteredMatchesLength,
+        selectedMatchIndex: currentSelectedMatchIndex,
+        selectedMatchId: currentSelectedMatchId,
+        selectedMatchStreamsLength,
+        selectedStreamKind,
+        hasSelectedStream,
+        canRetrySelectedMatchLookup: canRetrySelectedMatchLookupCurrent,
+      } = navigationStateRef.current;
 
       if (isBack) {
         event.preventDefault();
@@ -388,16 +542,16 @@ export default function App() {
         return;
       }
 
-      if (safeScreen === 'home') {
-        if (homeFocusArea === 'sports') {
+      if (currentScreen === 'home') {
+        if (currentHomeFocusArea === 'sports') {
           if (key === 'ArrowUp') {
             event.preventDefault();
-            setSelectedSportIndex((current) => clampIndex(current - 1, sports.length));
+            setSelectedSportIndex((current) => clampIndex(current - 1, sportsLength));
             return;
           }
           if (key === 'ArrowDown') {
             event.preventDefault();
-            setSelectedSportIndex((current) => clampIndex(current + 1, sports.length));
+            setSelectedSportIndex((current) => clampIndex(current + 1, sportsLength));
             return;
           }
           if (key === 'ArrowRight') {
@@ -408,8 +562,8 @@ export default function App() {
         } else {
           if (key === 'ArrowLeft') {
             event.preventDefault();
-            if (selectedMatchIndex > 0) {
-              setSelectedMatchIndex((current) => clampIndex(current - 1, filteredMatches.length));
+            if (currentSelectedMatchIndex > 0) {
+              setSelectedMatchIndex((current) => clampIndex(current - 1, filteredMatchesLength));
             } else {
               setHomeFocusArea('sports');
             }
@@ -417,7 +571,7 @@ export default function App() {
           }
           if (key === 'ArrowRight') {
             event.preventDefault();
-            setSelectedMatchIndex((current) => clampIndex(current + 1, filteredMatches.length));
+            setSelectedMatchIndex((current) => clampIndex(current + 1, filteredMatchesLength));
             return;
           }
           if (key === 'ArrowUp') {
@@ -435,8 +589,8 @@ export default function App() {
         return;
       }
 
-      if (safeScreen === 'detail') {
-        if (detailFocusArea === 'summary') {
+      if (currentScreen === 'detail') {
+        if (currentDetailFocusArea === 'summary') {
           if (key === 'ArrowRight' || key === 'ArrowDown') {
             event.preventDefault();
             setDetailFocusArea('streams');
@@ -450,8 +604,8 @@ export default function App() {
           }
           if (key === 'ArrowLeft') {
             event.preventDefault();
-            if (selectedStreamIndex > 0) {
-              setSelectedStreamIndex((current) => clampIndex(current - 1, selectedMatchStreams.length));
+            if (navigationStateRef.current.selectedStreamIndex > 0) {
+              setSelectedStreamIndex((current) => clampIndex(current - 1, selectedMatchStreamsLength));
             } else {
               setDetailFocusArea('summary');
             }
@@ -459,15 +613,15 @@ export default function App() {
           }
           if (key === 'ArrowRight') {
             event.preventDefault();
-            setSelectedStreamIndex((current) => clampIndex(current + 1, selectedMatchStreams.length));
+            setSelectedStreamIndex((current) => clampIndex(current + 1, selectedMatchStreamsLength));
             return;
           }
           if (key === 'Enter') {
             event.preventDefault();
-            if (selectedStream) {
+            if (hasSelectedStream) {
               setScreen('player');
-            } else if (selectedMatch && canRetrySelectedMatchLookup) {
-              retryStreamsForMatch(selectedMatch.id);
+            } else if (currentSelectedMatchId && canRetrySelectedMatchLookupCurrent) {
+              retryStreamsForMatch(currentSelectedMatchId);
             }
             return;
           }
@@ -475,8 +629,8 @@ export default function App() {
         return;
       }
 
-      if (safeScreen === 'player') {
-        if (selectedStream?.kind === 'embed') {
+      if (currentScreen === 'player') {
+        if (selectedStreamKind === 'embed') {
           if (key === 'Enter') {
             event.preventDefault();
             const embedFrame = document.querySelector('.player-embed') as HTMLIFrameElement | null;
@@ -521,18 +675,7 @@ export default function App() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [
-    detailFocusArea,
-    filteredMatches.length,
-    homeFocusArea,
-    safeScreen,
-    screen,
-    canRetrySelectedMatchLookup,
-    selectedMatch,
-    selectedMatchStreams.length,
-    selectedStream,
-    sports.length,
-  ]);
+  }, []);
 
   if (loading) {
     return (
@@ -583,7 +726,10 @@ export default function App() {
   }
 
   return (
-    <div className={`app-shell${safeScreen === 'player' ? ' player-shell' : ''}`} style={{ ['--accent' as string]: selectedAccent }}>
+    <div
+      className={`app-shell${safeScreen === 'player' ? ' player-shell' : ''}${isTvRuntime ? ' app-shell--tv' : ''}`}
+      style={{ ['--accent' as string]: selectedAccent }}
+    >
       <div className="app-ambient" aria-hidden="true">
         <div className="app-orb orb-one" />
         <div className="app-orb orb-two" />

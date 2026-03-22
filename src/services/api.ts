@@ -5,6 +5,7 @@ const apiBaseUrl = import.meta.env.VITE_SPORTS_API_BASE_URL?.trim();
 const streamRequestRetries = 2;
 const catalogRequestTimeoutMs = 9000;
 const streamRequestTimeoutMs = 10000;
+const streamLookupCacheTtlMs = 180000;
 const knownPopupDomains = [
   'increasecattle.net',
   'dynamicsnake.net',
@@ -20,6 +21,14 @@ const knownPopupDomains = [
   'foxtrend.net',
   'ziggo-gratis.com',
 ];
+const cachedStreamLookups = new Map<
+  string,
+  {
+    result: MatchStreamLookupResult;
+    expiresAt: number;
+  }
+>();
+const inFlightStreamLookups = new Map<string, Promise<MatchStreamLookupResult>>();
 
 async function delay(ms: number) {
   await new Promise((resolve) => {
@@ -217,6 +226,35 @@ function normalizeStreamLookupResult(payload: unknown): MatchStreamLookupResult 
   throw new Error('Invalid stream lookup payload');
 }
 
+function cloneStreamLookupResult(result: MatchStreamLookupResult): MatchStreamLookupResult {
+  return {
+    streams: [...result.streams],
+    pending: result.pending,
+    message: result.message,
+  };
+}
+
+function getCachedStreamLookup(matchId: string) {
+  const cachedEntry = cachedStreamLookups.get(matchId);
+  if (!cachedEntry) {
+    return null;
+  }
+
+  if (cachedEntry.expiresAt <= Date.now()) {
+    cachedStreamLookups.delete(matchId);
+    return null;
+  }
+
+  return cloneStreamLookupResult(cachedEntry.result);
+}
+
+function setCachedStreamLookup(matchId: string, result: MatchStreamLookupResult) {
+  cachedStreamLookups.set(matchId, {
+    result: cloneStreamLookupResult(result),
+    expiresAt: Date.now() + streamLookupCacheTtlMs,
+  });
+}
+
 async function fetchJson(endpoint: string, timeoutMs: number) {
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
@@ -254,7 +292,12 @@ export async function loadSportsCatalog(): Promise<SportsCatalog> {
   return normalizeCatalog(await fetchJson(endpoint, catalogRequestTimeoutMs));
 }
 
-export async function loadMatchStreams(matchId: string): Promise<MatchStreamLookupResult> {
+export function invalidateMatchStreams(matchId: string) {
+  cachedStreamLookups.delete(matchId);
+  inFlightStreamLookups.delete(matchId);
+}
+
+async function requestMatchStreams(matchId: string): Promise<MatchStreamLookupResult> {
   if (!apiBaseUrl) {
     const match = mockCatalog.matches.find((entry) => entry.id === matchId);
     return {
@@ -279,4 +322,39 @@ export async function loadMatchStreams(matchId: string): Promise<MatchStreamLook
   }
 
   throw lastError || new Error('Stream request failed');
+}
+
+export async function loadMatchStreams(
+  matchId: string,
+  { force = false }: { force?: boolean } = {}
+): Promise<MatchStreamLookupResult> {
+  if (force) {
+    invalidateMatchStreams(matchId);
+  } else {
+    const cachedLookup = getCachedStreamLookup(matchId);
+    if (cachedLookup) {
+      return cachedLookup;
+    }
+
+    const inFlightLookup = inFlightStreamLookups.get(matchId);
+    if (inFlightLookup) {
+      return cloneStreamLookupResult(await inFlightLookup);
+    }
+  }
+
+  const lookupPromise = requestMatchStreams(matchId)
+    .then((result) => {
+      setCachedStreamLookup(matchId, result);
+      return cloneStreamLookupResult(result);
+    })
+    .finally(() => {
+      inFlightStreamLookups.delete(matchId);
+    });
+
+  inFlightStreamLookups.set(matchId, lookupPromise);
+  return cloneStreamLookupResult(await lookupPromise);
+}
+
+export function preloadMatchStreams(matchId: string) {
+  return loadMatchStreams(matchId).then(() => undefined).catch(() => undefined);
 }
