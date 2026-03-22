@@ -1,5 +1,5 @@
 import { mockCatalog } from '../data/mockData';
-import type { MatchStreamLookupResult, SportsCatalog, StreamOption } from '../types';
+import type { MatchCardData, MatchStreamLookupResult, SportsCatalog, StreamOption } from '../types';
 
 const apiBaseUrl = import.meta.env.VITE_SPORTS_API_BASE_URL?.trim();
 const streamRequestRetries = 2;
@@ -10,6 +10,68 @@ async function delay(ms: number) {
   await new Promise((resolve) => {
     window.setTimeout(resolve, ms);
   });
+}
+
+function normalizeStreamOption(stream: Partial<StreamOption>, index: number): StreamOption {
+  const candidate = stream && typeof stream === 'object' ? stream : {};
+
+  return {
+    id: String(candidate.id || candidate.url || `stream-${index}`),
+    label: String(candidate.label || candidate.provider || `Source ${index + 1}`),
+    provider: String(candidate.provider || 'Unknown'),
+    quality: String(candidate.quality || 'Auto'),
+    language: String(candidate.language || 'Unknown'),
+    kind:
+      candidate.kind === 'hls' || candidate.kind === 'dash' || candidate.kind === 'mp4' || candidate.kind === 'embed'
+        ? candidate.kind
+        : 'embed',
+    url: String(candidate.url || ''),
+    authorized: Boolean(candidate.authorized),
+    drm: typeof candidate.drm === 'boolean' ? candidate.drm : undefined,
+    notes: typeof candidate.notes === 'string' ? candidate.notes : undefined,
+    headers:
+      candidate.headers && typeof candidate.headers === 'object'
+        ? Object.keys(candidate.headers).reduce<Record<string, string>>((accumulator, key) => {
+            accumulator[key] = String(candidate.headers?.[key] || '');
+            return accumulator;
+          }, {})
+        : undefined,
+  };
+}
+
+function normalizeMatchCard(match: Partial<MatchCardData>): MatchCardData {
+  const matchStreams = Array.isArray(match.streams)
+    ? prepareStreamsForClient(
+        match.streams
+          .filter(Boolean)
+          .map((stream, index) => normalizeStreamOption(stream, index))
+          .filter((stream) => stream.url)
+      )
+    : [];
+
+  return {
+    id: String(match.id || ''),
+    sportId: String(match.sportId || 'unknown'),
+    league: String(match.league || 'Unknown League'),
+    round: String(match.round || ''),
+    title: String(match.title || 'Untitled Match'),
+    summary: String(match.summary || ''),
+    venue: String(match.venue || ''),
+    status: match.status === 'live' || match.status === 'upcoming' || match.status === 'ended' ? match.status : 'upcoming',
+    kickoffLabel: String(match.kickoffLabel || 'Schedule pending'),
+    minuteLabel: typeof match.minuteLabel === 'string' ? match.minuteLabel : undefined,
+    scoreLine: String(match.scoreLine || ''),
+    homeTeam: String(match.homeTeam || ''),
+    awayTeam: String(match.awayTeam || ''),
+    homeLogoUrl: typeof match.homeLogoUrl === 'string' ? match.homeLogoUrl : undefined,
+    awayLogoUrl: typeof match.awayLogoUrl === 'string' ? match.awayLogoUrl : undefined,
+    tags: Array.isArray(match.tags) ? match.tags.filter(Boolean).map((tag) => String(tag)) : [],
+    streams: matchStreams,
+    streamCountHint:
+      typeof match.streamCountHint === 'number' && Number.isFinite(match.streamCountHint)
+        ? match.streamCountHint
+        : undefined,
+  };
 }
 
 function normalizeCatalog(payload: unknown): SportsCatalog {
@@ -25,11 +87,14 @@ function normalizeCatalog(payload: unknown): SportsCatalog {
   const catalog = payload as SportsCatalog;
 
   return {
-    ...catalog,
-    matches: catalog.matches.map((match) => ({
-      ...match,
-      streams: prepareStreamsForClient(match.streams || []),
+    sports: catalog.sports.map((sport, index) => ({
+      id: String(sport?.id || `sport-${index}`),
+      name: String(sport?.name || 'Unknown Sport'),
+      accent: String(sport?.accent || '#22c55e'),
+      shortLabel: String(sport?.shortLabel || sport?.name || 'LIVE').slice(0, 5).toUpperCase(),
+      logoUrl: typeof sport?.logoUrl === 'string' ? sport.logoUrl : undefined,
     })),
+    matches: catalog.matches.map((match) => normalizeMatchCard(match)),
   };
 }
 
@@ -93,7 +158,12 @@ function prepareStreamsForClient(streams: StreamOption[]) {
 function normalizeStreamLookupResult(payload: unknown): MatchStreamLookupResult {
   if (Array.isArray(payload)) {
     return {
-      streams: prepareStreamsForClient(payload as StreamOption[]),
+      streams: prepareStreamsForClient(
+        (payload as StreamOption[])
+          .filter(Boolean)
+          .map((stream, index) => normalizeStreamOption(stream, index))
+          .filter((stream) => stream.url)
+      ),
     };
   }
 
@@ -102,8 +172,15 @@ function normalizeStreamLookupResult(payload: unknown): MatchStreamLookupResult 
     typeof payload === 'object' &&
     Array.isArray((payload as { streams?: StreamOption[] }).streams)
   ) {
+    const matchStreams = (payload as { streams: StreamOption[] }).streams;
+
     return {
-      streams: prepareStreamsForClient((payload as { streams: StreamOption[] }).streams),
+      streams: prepareStreamsForClient(
+        matchStreams
+          .filter(Boolean)
+          .map((stream, index) => normalizeStreamOption(stream, index))
+          .filter((stream) => stream.url)
+      ),
       pending: Boolean((payload as { pending?: boolean }).pending),
       message:
         typeof (payload as { message?: string }).message === 'string'

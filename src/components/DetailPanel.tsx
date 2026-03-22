@@ -23,7 +23,8 @@ export function DetailPanel({
   canRetry = false,
 }: DetailPanelProps) {
   const streamRefs = useRef<Array<HTMLDivElement | null>>([]);
-  const streamCount = match.streams.length > 0 ? match.streams.length : match.streamCountHint || 0;
+  const matchStreams = Array.isArray(match.streams) ? match.streams : [];
+  const streamCount = matchStreams.length > 0 ? matchStreams.length : match.streamCountHint || 0;
   const streamHeading = isLoadingStreams && streamCount === 0 ? 'Resolving...' : `${streamCount} feeds`;
 
   useEffect(() => {
@@ -66,7 +67,7 @@ export function DetailPanel({
           </div>
         ) : null}
 
-        {!isLoadingStreams && !streamError && match.streams.length === 0 ? (
+        {!isLoadingStreams && !streamError && matchStreams.length === 0 ? (
           <div className="stream-state-card">
             <strong>No streams found</strong>
             <p>This match did not return any playable sources from the configured resolver.</p>
@@ -76,7 +77,7 @@ export function DetailPanel({
           </div>
         ) : null}
 
-        {match.streams.map((stream, index) => {
+        {matchStreams.map((stream, index) => {
           const selected = index === streamIndex;
           return (
             <div

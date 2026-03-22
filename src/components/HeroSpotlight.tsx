@@ -31,6 +31,7 @@ export function HeroSpotlight({
   selectedStream = null,
 }: HeroSpotlightProps) {
   const displayScore = getDisplayScore(match);
+  const matchTags = Array.isArray(match.tags) ? match.tags : [];
   const helperText =
     mode === 'detail'
       ? selectedStream
@@ -73,7 +74,7 @@ export function HeroSpotlight({
           </div>
         </div>
         <div className="hero-tags">
-          {match.tags.slice(0, 4).map((tag) => (
+          {matchTags.slice(0, 4).map((tag) => (
             <span key={tag} className="tag-chip">
               {tag}
             </span>
