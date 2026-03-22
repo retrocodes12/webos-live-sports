@@ -68,7 +68,7 @@ const PRIVATE_SITE_MAX_PROVIDER_CANDIDATES = Math.max(
 );
 const PRIVATE_SITE_PROVIDER_RESOLVE_LIMIT = Math.max(
   1,
-  Number(process.env.PRIVATE_SITE_PROVIDER_RESOLVE_LIMIT || 2)
+  Number(process.env.PRIVATE_SITE_PROVIDER_RESOLVE_LIMIT || 7)
 );
 const PRIVATE_SITE_PROVIDER_FETCH_TIMEOUT_MS = Math.max(
   1000,
@@ -918,6 +918,17 @@ async function resolveProviderChoices(matchPageHtml, matchPageUrl, timeoutMs) {
 
   const resolvedStreams = normalizeStreams(resolvedGroups.flat());
   if (resolvedStreams.length > 0) {
+    if (resolvedStreams.length >= 4) {
+      return resolvedStreams;
+    }
+
+    const unresolvedProviderFallbacks = normalizeStreams(
+      providerCandidates.slice(providerCandidatesToResolve.length)
+    );
+    if (unresolvedProviderFallbacks.length > 0) {
+      return normalizeStreams(resolvedStreams.concat(unresolvedProviderFallbacks));
+    }
+
     return resolvedStreams;
   }
 
