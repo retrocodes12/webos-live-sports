@@ -20,13 +20,69 @@ function sanitizeId(input, fallback) {
 
 function normalizeStatus(status) {
   const raw = String(status || '').trim().toLowerCase();
-  if (['live', 'inplay', 'in-play', 'playing', 'active'].includes(raw)) {
+  if (['live', 'inplay', 'in-play', 'in_play', 'playing', 'active', 'paused'].includes(raw)) {
     return 'live';
   }
-  if (['ended', 'complete', 'completed', 'finished', 'closed'].includes(raw)) {
+  if (
+    ['ended', 'complete', 'completed', 'finished', 'closed', 'awarded', 'after_extra_time', 'penalties'].includes(raw)
+  ) {
     return 'ended';
   }
   return 'upcoming';
+}
+
+function getEntityName(entity, fallback = '') {
+  if (typeof entity === 'string' || typeof entity === 'number') {
+    return String(entity).trim();
+  }
+
+  if (entity && typeof entity === 'object') {
+    return String(entity.name || entity.shortName || entity.tla || entity.code || fallback).trim();
+  }
+
+  return String(fallback).trim();
+}
+
+function getEntityLogo(entity) {
+  if (!entity || typeof entity !== 'object') {
+    return '';
+  }
+
+  return String(entity.crest || entity.logo || entity.emblem || '').trim();
+}
+
+function formatStage(stage) {
+  const raw = String(stage || '').trim();
+  if (!raw) {
+    return '';
+  }
+
+  return raw
+    .toLowerCase()
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function getScoreLine(match) {
+  if (match?.scoreLine) {
+    return String(match.scoreLine);
+  }
+
+  const score = match?.score;
+  if (score && typeof score === 'object') {
+    const snapshot = score.fullTime || score.regularTime || score.halfTime || null;
+    if (snapshot && (snapshot.home != null || snapshot.away != null)) {
+      return `${snapshot.home ?? 0} - ${snapshot.away ?? 0}`;
+    }
+  }
+
+  if (match?.homeScore != null && match?.awayScore != null) {
+    return `${match.homeScore} - ${match.awayScore}`;
+  }
+
+  return '0 - 0';
 }
 
 function normalizeStreamKind(kind, url) {
@@ -145,12 +201,21 @@ function normalizeStream(stream, index) {
 }
 
 function normalizeMatch(match, index) {
-  const homeTeam = String(match?.homeTeam || match?.home || match?.teamA || match?.participants?.[0]?.name || 'Home');
-  const awayTeam = String(match?.awayTeam || match?.away || match?.teamB || match?.participants?.[1]?.name || 'Away');
+  const competitionName = getEntityName(match?.competition || match?.tournament, '');
+  const competitionCode = getEntityName(match?.competition?.code, '');
+  const homeTeam = getEntityName(
+    match?.homeTeam || match?.home || match?.teamA || match?.participants?.[0],
+    'Home'
+  );
+  const awayTeam = getEntityName(
+    match?.awayTeam || match?.away || match?.teamB || match?.participants?.[1],
+    'Away'
+  );
   const homeLogoUrl = String(
     match?.homeLogoUrl ||
       match?.homeLogo ||
       match?.teamALogo ||
+      match?.homeTeam?.crest ||
       match?.teamA?.logo ||
       match?.home?.logo ||
       match?.participants?.[0]?.logo ||
@@ -160,6 +225,7 @@ function normalizeMatch(match, index) {
     match?.awayLogoUrl ||
       match?.awayLogo ||
       match?.teamBLogo ||
+      match?.awayTeam?.crest ||
       match?.teamB?.logo ||
       match?.away?.logo ||
       match?.participants?.[1]?.logo ||
@@ -179,32 +245,56 @@ function normalizeMatch(match, index) {
 
   return {
     id: String(match?.id || match?.eventId || `match-${index + 1}`),
-    sportId: sanitizeId(match?.sportId || match?.sport || match?.categoryId || match?.category || 'general', `sport-${index + 1}`),
-    league: String(match?.league || match?.competition || match?.tournament || 'Authorized Event'),
-    round: String(match?.round || match?.stage || match?.phase || 'Featured'),
+    sportId: sanitizeId(
+      match?.sportId ||
+        match?.sport ||
+        match?.categoryId ||
+        match?.category ||
+        competitionCode ||
+        competitionName ||
+        'general',
+      `sport-${index + 1}`
+    ),
+    league: String(match?.league || competitionName || getEntityName(match?.tournament) || 'Authorized Event'),
+    round: String(
+      match?.round ||
+        (match?.matchday != null ? `Matchday ${match.matchday}` : '') ||
+        formatStage(match?.stage || match?.phase) ||
+        'Featured'
+    ),
     title: String(match?.title || `${homeTeam} vs ${awayTeam}`),
     summary: String(match?.summary || match?.description || match?.subtitle || 'Authorized sports event.'),
     venue: String(match?.venue || match?.location || 'Venue pending'),
     status: normalizeStatus(match?.status),
-    kickoffLabel: formatKickoffLabel(match?.kickoffLabel || match?.startTime || match?.startsAt || match?.scheduledAt),
+    kickoffLabel: formatKickoffLabel(
+      match?.kickoffLabel || match?.startTime || match?.startsAt || match?.scheduledAt || match?.utcDate
+    ),
     minuteLabel:
       match?.minuteLabel || match?.clock || match?.minute
         ? String(match?.minuteLabel || match?.clock || match?.minute)
         : undefined,
-    scoreLine: String(
-      match?.scoreLine ||
-        match?.score ||
-        (match?.homeScore != null && match?.awayScore != null
-          ? `${match.homeScore} - ${match.awayScore}`
-          : '0 - 0')
-    ),
+    scoreLine: getScoreLine(match),
     homeTeam,
     awayTeam,
-    homeLogoUrl: homeLogoUrl || undefined,
-    awayLogoUrl: awayLogoUrl || undefined,
+    homeLogoUrl: homeLogoUrl || getEntityLogo(match?.homeTeam) || undefined,
+    awayLogoUrl: awayLogoUrl || getEntityLogo(match?.awayTeam) || undefined,
     tags: Array.isArray(match?.tags) ? match.tags.map((tag) => String(tag)) : [],
+    resolverQuery:
+      match?.resolverQuery &&
+      typeof match.resolverQuery === 'object' &&
+      !Array.isArray(match.resolverQuery)
+        ? match.resolverQuery
+        : undefined,
     streams,
-    sportName: String(match?.sportName || match?.sport || match?.categoryName || match?.category || match?.sportId || 'General'),
+    sportName: String(
+      match?.sportName ||
+        match?.sport ||
+        match?.categoryName ||
+        match?.category ||
+        competitionName ||
+        match?.sportId ||
+        'General'
+    ),
   };
 }
 

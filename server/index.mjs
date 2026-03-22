@@ -15,11 +15,13 @@ const projectRoot = path.resolve(__dirname, '..');
 loadProjectEnv(projectRoot);
 
 const port = Number(process.env.SPORTS_API_PORT || process.env.PORT || 8787);
-const upstreamCatalogUrl = String(process.env.UPSTREAM_CATALOG_URL || '').trim();
+const upstreamCatalogUrlTemplate = String(process.env.UPSTREAM_CATALOG_URL || '').trim();
 const upstreamTimeoutMs = Number(process.env.UPSTREAM_TIMEOUT_MS || 12000);
 const catalogCacheTtlMs = Math.max(0, Number(process.env.CATALOG_CACHE_TTL_MS || 60000));
 const streamCacheTtlMs = Math.max(0, Number(process.env.STREAM_CACHE_TTL_MS || 300000));
 const streamResolveRetries = Math.max(0, Number(process.env.STREAM_RESOLVE_RETRIES || 0));
+const privateSiteBaseUrl = String(process.env.PRIVATE_SITE_BASE_URL || '').trim();
+const streamResolverUrl = String(process.env.STREAM_RESOLVER_URL || '').trim();
 let cachedCatalog = null;
 let cachedCatalogExpiresAt = 0;
 let cachedCatalogLoadedAt = 0;
@@ -84,14 +86,35 @@ function buildUpstreamHeaders() {
   return headers;
 }
 
+function formatUpstreamDate(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function resolveUpstreamCatalogUrl() {
+  if (!upstreamCatalogUrlTemplate) {
+    return '';
+  }
+
+  const now = new Date();
+  const today = formatUpstreamDate(now);
+  const yesterday = formatUpstreamDate(new Date(now.getTime() - 86_400_000));
+  const tomorrow = formatUpstreamDate(new Date(now.getTime() + 86_400_000));
+
+  return upstreamCatalogUrlTemplate
+    .replaceAll('{{today}}', today)
+    .replaceAll('{{yesterday}}', yesterday)
+    .replaceAll('{{tomorrow}}', tomorrow);
+}
+
 async function fetchUpstreamCatalog() {
+  const upstreamCatalogUrl = resolveUpstreamCatalogUrl();
   if (!upstreamCatalogUrl) {
     const { module: privateResolverModule } = await loadPrivateResolverModule();
     if (typeof privateResolverModule.loadPrivateCatalog === 'function') {
       return await privateResolverModule.loadPrivateCatalog({ timeoutMs: upstreamTimeoutMs });
     }
 
-    if (String(process.env.PRIVATE_SITE_BASE_URL || '').trim().includes('/demo-source/')) {
+    if (privateSiteBaseUrl.includes('/demo-source/')) {
       return demoSourceCatalog;
     }
     return manualCatalogSource;
@@ -171,8 +194,9 @@ function refreshCatalogInBackground() {
 }
 
 async function resolveMatchStreams(match) {
-  if (upstreamCatalogUrl) {
-    return Array.isArray(match.streams) ? match.streams : [];
+  const upstreamStreams = Array.isArray(match.streams) ? match.streams : [];
+  if (upstreamCatalogUrlTemplate && upstreamStreams.length > 0) {
+    return upstreamStreams;
   }
 
   let lastError = null;
@@ -241,9 +265,9 @@ const server = createServer(async (request, response) => {
   if (request.method === 'GET' && requestUrl.pathname === '/health') {
     sendJson(response, 200, {
       ok: true,
-      upstreamConfigured: Boolean(upstreamCatalogUrl),
-      privateSiteConfigured: Boolean(String(process.env.PRIVATE_SITE_BASE_URL || '').trim()),
-      resolverConfigured: Boolean(process.env.STREAM_RESOLVER_URL),
+      upstreamConfigured: Boolean(upstreamCatalogUrlTemplate),
+      privateSiteConfigured: Boolean(privateSiteBaseUrl),
+      resolverConfigured: Boolean(streamResolverUrl || privateSiteBaseUrl),
       catalogCached: Boolean(cachedCatalog),
       catalogRefreshInFlight: Boolean(catalogRefreshPromise),
       catalogCacheAgeMs: cachedCatalogLoadedAt ? Date.now() - cachedCatalogLoadedAt : null,
@@ -262,7 +286,7 @@ const server = createServer(async (request, response) => {
       }
 
       const catalog = await fetchCatalog({ allowStaleOnError: true });
-      sendJson(response, 200, upstreamCatalogUrl ? catalog : buildPublicCatalog(catalog));
+      sendJson(response, 200, upstreamCatalogUrlTemplate ? catalog : buildPublicCatalog(catalog));
     } catch (error) {
       sendJson(response, 502, {
         error: error instanceof Error ? error.message : 'Failed to load upstream catalog',
@@ -318,9 +342,10 @@ const server = createServer(async (request, response) => {
 
 server.listen(port, '0.0.0.0', () => {
   const sourceLabel =
-    upstreamCatalogUrl ||
-    (process.env.PRIVATE_SITE_BASE_URL ? 'private source catalog' : 'manual catalog');
-  const resolverLabel = process.env.STREAM_RESOLVER_URL || 'embedded demo streams';
+    resolveUpstreamCatalogUrl() ||
+    (privateSiteBaseUrl ? 'private source catalog' : 'manual catalog');
+  const resolverLabel =
+    streamResolverUrl || (privateSiteBaseUrl ? 'private site resolver' : 'embedded demo streams');
   console.log(`sportzx API listening on http://127.0.0.1:${port} using ${sourceLabel} and ${resolverLabel}`);
   refreshCatalogInBackground();
 });

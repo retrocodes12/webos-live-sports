@@ -99,10 +99,14 @@ Or:
 UPSTREAM_CATALOG_URL=https://your-authorized-feed-api.example.com/catalog
 ```
 
+`UPSTREAM_CATALOG_URL` also supports `{{yesterday}}`, `{{today}}`, and `{{tomorrow}}` placeholders. That is useful for feeds like `football-data.org` where the match window should move automatically each day.
+
 Optional:
 
 ```bash
 UPSTREAM_AUTH_BEARER=your-token
+UPSTREAM_AUTH_HEADER_NAME=
+UPSTREAM_AUTH_HEADER_VALUE=
 UPSTREAM_TIMEOUT_MS=12000
 CATALOG_CACHE_TTL_MS=60000
 STREAM_CACHE_TTL_MS=300000
@@ -153,6 +157,14 @@ UPSTREAM_CATALOG_URL=https://your-authorized-feed-api.example.com/catalog
 UPSTREAM_AUTH_BEARER=your-token
 ```
 
+For `football-data.org`, use:
+
+```bash
+UPSTREAM_CATALOG_URL=https://api.football-data.org/v4/matches?dateFrom={{today}}&dateTo={{tomorrow}}
+UPSTREAM_AUTH_HEADER_NAME=X-Auth-Token
+UPSTREAM_AUTH_HEADER_VALUE=your-football-data-token
+```
+
 After Render deploys, copy the public URL, then set it in your frontend build:
 
 ```bash
@@ -179,6 +191,7 @@ If `UPSTREAM_CATALOG_URL` is not set, the API returns a local manual catalog fro
 In that mode, `/catalog` returns event metadata with empty `streams`, and `/matches/:id/streams` resolves the actual links on demand through [streamResolver.mjs](/home/sohil/webos-live-sports/server/streamResolver.mjs).
 
 If `UPSTREAM_CATALOG_URL` is set, the API fetches your upstream catalog response, applies auth headers from env, and normalizes the payload into the app contract through [catalogAdapter.mjs](/home/sohil/webos-live-sports/server/catalogAdapter.mjs).
+If the upstream feed includes `streams`, those are returned directly. If it only includes match metadata, `/matches/:id/streams` falls through to the configured resolver path, which can be either `STREAM_RESOLVER_URL` or the private-site extraction flow.
 
 Start it with:
 
@@ -297,10 +310,21 @@ The backend adapter also accepts a looser upstream shape, for example:
 
 ## Plugin-style stream resolver mode
 
-If your source only returns stream links, keep the catalog local and set:
+If your upstream feed only returns match details, or if your source only returns stream links, set:
 
 ```bash
+UPSTREAM_CATALOG_URL=https://your-authorized-feed-api.example.com/catalog
 STREAM_RESOLVER_URL=https://your-resolver.example.com/streams
+```
+
+If you want to keep the catalog local, leave `UPSTREAM_CATALOG_URL` unset and the same resolver flow still works.
+
+For `football-data.org`, the same pattern works with:
+
+```bash
+UPSTREAM_CATALOG_URL=https://api.football-data.org/v4/matches?dateFrom={{today}}&dateTo={{tomorrow}}
+UPSTREAM_AUTH_HEADER_NAME=X-Auth-Token
+UPSTREAM_AUTH_HEADER_VALUE=your-football-data-token
 ```
 
 The local API will `POST` this payload when the user opens a match:
