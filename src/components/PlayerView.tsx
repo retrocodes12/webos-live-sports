@@ -34,8 +34,6 @@ function formatStreamKindLabel(kind: StreamOption['kind']) {
 
 export function PlayerView({ match, stream }: PlayerViewProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const iframeRef = useRef<HTMLIFrameElement | null>(null);
-  const embedTimeoutRef = useRef<number | null>(null);
   const [playbackError, setPlaybackError] = useState('');
   const [isReady, setIsReady] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -81,35 +79,22 @@ export function PlayerView({ match, stream }: PlayerViewProps) {
   const sourceNotes =
     stream.notes ||
     (isEmbed
-      ? 'This source opens inside an embedded provider view.'
+      ? 'Embedded provider pages are blocked inside the app because they tend to trigger popups, redirects, and hostile overlays.'
       : 'This source uses the internal player and remote transport controls.');
 
   useEffect(() => {
     if (isEmbed) {
-      if (embedTimeoutRef.current) {
-        window.clearTimeout(embedTimeoutRef.current);
-      }
       setActiveEngine('embed');
-      setPlaybackError('');
+      setPlaybackError(
+        'Embedded provider pages are blocked inside the app because they trigger popups and redirects. Return to the source list and choose a direct feed when available.'
+      );
       setIsReady(false);
       setIsPlaying(false);
-      setIsBuffering(true);
+      setIsBuffering(false);
       setHasEnded(false);
       setCurrentTime(0);
       setDuration(0);
-      embedTimeoutRef.current = window.setTimeout(() => {
-        setPlaybackError(
-          'This embedded provider did not render inside the app. Try another feed or return to the stream list.'
-        );
-        setIsBuffering(false);
-      }, 8000);
-
-      return () => {
-        if (embedTimeoutRef.current) {
-          window.clearTimeout(embedTimeoutRef.current);
-          embedTimeoutRef.current = null;
-        }
-      };
+      return;
     }
 
     const video = videoRef.current;
@@ -208,26 +193,15 @@ export function PlayerView({ match, stream }: PlayerViewProps) {
     <section className="player-screen">
       <div className="player-frame">
         {isEmbed ? (
-          <iframe
-            ref={iframeRef}
-            className="player-embed"
-            src={stream.url}
-            title={streamLabel}
-            allow="autoplay; fullscreen; picture-in-picture; encrypted-media; clipboard-read; clipboard-write"
-            allowFullScreen
-            loading="eager"
-            tabIndex={0}
-            sandbox="allow-same-origin allow-scripts allow-forms allow-presentation allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads allow-top-navigation-by-user-activation"
-            onLoad={() => {
-              if (embedTimeoutRef.current) {
-                window.clearTimeout(embedTimeoutRef.current);
-                embedTimeoutRef.current = null;
-              }
-              setIsReady(true);
-              setIsBuffering(false);
-              setPlaybackError('');
-            }}
-          />
+          <div className="player-embed-blocked">
+            <span className="panel-kicker">Embedded Provider Blocked</span>
+            <h2>Popup-prone source disabled</h2>
+            <p>
+              This source is an external embed page, not a direct media stream. The app blocks it to avoid popups,
+              redirects, and hostile overlays on the TV.
+            </p>
+            <p>Return to the source list and choose an `HLS`, `MP4`, or `DASH` feed when available.</p>
+          </div>
         ) : (
           <video
             ref={videoRef}

@@ -1038,6 +1038,29 @@ code {
   width: 100%;
 }
 
+.player-embed-blocked {
+  background:
+    radial-gradient(circle at top left, rgba(34, 211, 238, 0.18), transparent 26%),
+    linear-gradient(180deg, rgba(6, 14, 22, 0.98), rgba(10, 22, 34, 0.96));
+  color: var(--text-primary);
+  display: grid;
+  gap: 14px;
+  min-height: 100%;
+  padding: 56px 44px 88px;
+  place-content: center start;
+}
+
+.player-embed-blocked h2 {
+  margin: 0;
+}
+
+.player-embed-blocked p {
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin: 0;
+  max-width: 42rem;
+}
+
 .player-video {
   object-fit: contain;
 }

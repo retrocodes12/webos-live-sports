@@ -5,6 +5,21 @@ const apiBaseUrl = import.meta.env.VITE_SPORTS_API_BASE_URL?.trim();
 const streamRequestRetries = 2;
 const catalogRequestTimeoutMs = 9000;
 const streamRequestTimeoutMs = 10000;
+const knownPopupDomains = [
+  'increasecattle.net',
+  'dynamicsnake.net',
+  'newserbir.site',
+  'streams.center',
+  'sports-rope.top',
+  'topstreamshd.top',
+  'embedsports.top',
+  'totalsportek.army',
+  'totalsportekarmy.com',
+  'fsportshdz.club',
+  '1010i.com',
+  'foxtrend.net',
+  'ziggo-gratis.com',
+];
 
 async function delay(ms: number) {
   await new Promise((resolve) => {
@@ -100,6 +115,7 @@ function normalizeCatalog(payload: unknown): SportsCatalog {
 
 function getClientStreamPenalty(stream: StreamOption) {
   const url = String(stream.url || '').toLowerCase();
+  let penalty = stream.kind === 'embed' ? 20 : 0;
 
   if (
     url.includes('newserbir.site/player_stateless') ||
@@ -109,10 +125,19 @@ function getClientStreamPenalty(stream: StreamOption) {
     url.includes('ziggo-gratis.com/') ||
     url.includes('streams.center/embed/')
   ) {
-    return 100;
+    penalty += 100;
   }
 
-  return 0;
+  try {
+    const hostname = new URL(stream.url).hostname.toLowerCase();
+    if (knownPopupDomains.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`))) {
+      penalty += 100;
+    }
+  } catch {
+    penalty += 10;
+  }
+
+  return penalty;
 }
 
 function shouldSuppressClientStream(stream: StreamOption) {
