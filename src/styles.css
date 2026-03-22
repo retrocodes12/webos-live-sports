@@ -1038,27 +1038,31 @@ code {
   width: 100%;
 }
 
-.player-embed-blocked {
+.player-embed-shell {
+  background: #000;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 100%;
+}
+
+.player-embed-warning {
   background:
-    radial-gradient(circle at top left, rgba(34, 211, 238, 0.18), transparent 26%),
-    linear-gradient(180deg, rgba(6, 14, 22, 0.98), rgba(10, 22, 34, 0.96));
+    linear-gradient(90deg, rgba(34, 211, 238, 0.18), rgba(14, 165, 233, 0.08)),
+    rgba(6, 14, 22, 0.96);
+  border-bottom: 1px solid rgba(125, 211, 252, 0.16);
   color: var(--text-primary);
   display: grid;
-  gap: 14px;
-  min-height: 100%;
-  padding: 56px 44px 88px;
-  place-content: center start;
+  gap: 8px;
+  padding: 18px 22px;
 }
 
-.player-embed-blocked h2 {
+.player-embed-warning h2 {
   margin: 0;
 }
 
-.player-embed-blocked p {
+.player-embed-warning p {
   color: var(--text-secondary);
-  line-height: 1.6;
   margin: 0;
-  max-width: 42rem;
 }
 
 .player-video {
