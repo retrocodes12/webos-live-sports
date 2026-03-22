@@ -11,13 +11,13 @@ services:
       - key: PRIVATE_SITE_BASE_URL
         value: https://totalsportek.army/
       - key: UPSTREAM_CATALOG_URL
-        sync: false
+        value: "https://api.football-data.org/v4/matches?dateFrom={{today}}&dateTo={{tomorrow}}"
       - key: UPSTREAM_AUTH_BEARER
         sync: false
       - key: UPSTREAM_AUTH_HEADER_NAME
-        sync: false
+        value: X-Auth-Token
       - key: UPSTREAM_AUTH_HEADER_VALUE
-        sync: false
+        value: "f4d1a935b0b44341a599be407dcf109e"
       - key: STREAM_RESOLVER_URL
         sync: false
       - key: STREAM_RESOLVER_AUTH_BEARER
