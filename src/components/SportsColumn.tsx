@@ -65,7 +65,21 @@ export function SportsColumn({
                 className={`sidebar-tile${active ? ' is-active' : ''}${focused ? ' is-focused' : ''}`}
                 style={{ ['--accent' as string]: sport.accent }}
               >
-                <span className="sidebar-tile-icon">{sport.shortLabel}</span>
+                <span className="sidebar-tile-icon">
+                  {sport.logoUrl ? (
+                    <img
+                      className="sidebar-tile-logo"
+                      src={sport.logoUrl}
+                      alt=""
+                      aria-hidden="true"
+                      loading="lazy"
+                      decoding="async"
+                      draggable={false}
+                    />
+                  ) : (
+                    sport.shortLabel
+                  )}
+                </span>
                 <span className="sidebar-tile-copy">
                   <span className="sidebar-tile-name">{sport.name}</span>
                   <span className="sidebar-tile-meta">{active ? 'Selected' : 'Browse'}</span>

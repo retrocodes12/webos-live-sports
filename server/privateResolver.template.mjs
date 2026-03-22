@@ -4,6 +4,7 @@ const RESOLVER_URL = process.env.STREAM_RESOLVER_URL || '';
 const RESOLVER_BEARER = process.env.STREAM_RESOLVER_AUTH_BEARER || '';
 const PRIVATE_SITE_BASE_URL = process.env.PRIVATE_SITE_BASE_URL || '';
 const PRIVATE_SITE_SEARCH_URL_TEMPLATE = process.env.PRIVATE_SITE_SEARCH_URL_TEMPLATE || '';
+const PRIVATE_SITE_FALLBACK_PAGE_URL = process.env.PRIVATE_SITE_FALLBACK_PAGE_URL || '';
 const PRIVATE_SITE_MATCH_LINK_SELECTOR =
   process.env.PRIVATE_SITE_MATCH_LINK_SELECTOR || 'a[href]';
 const PRIVATE_SITE_CATALOG_CARD_SELECTOR =
@@ -204,7 +205,13 @@ function buildSearchUrl(match, resolverQuery) {
     return '';
   }
 
-  const query = resolverQuery?.search || resolverQuery?.title || match.title;
+  const homeQuery = getPrimarySearchFragment(match?.homeTeam);
+  const awayQuery = getPrimarySearchFragment(match?.awayTeam);
+  const query =
+    resolverQuery?.search ||
+    [homeQuery, awayQuery].filter(Boolean).join(' ') ||
+    resolverQuery?.title ||
+    match.title;
   return PRIVATE_SITE_SEARCH_URL_TEMPLATE.replace('{query}', encodeURIComponent(String(query || '')));
 }
 
@@ -251,6 +258,152 @@ function inferProviderName(url) {
   } catch {
     return 'Private Website';
   }
+}
+
+function normalizeSearchText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function getSearchFragments(value) {
+  const normalized = normalizeSearchText(value);
+  if (!normalized) {
+    return [];
+  }
+
+  const genericTokens = new Set([
+    'a',
+    'ac',
+    'af',
+    'association',
+    'c',
+    'cf',
+    'club',
+    'de',
+    'del',
+    'deportivo',
+    'do',
+    'da',
+    'fc',
+    'football',
+    'futbol',
+    'rc',
+    'sc',
+    'team',
+    'the',
+  ]);
+  const simplified = normalized
+    .split(' ')
+    .filter((token) => token && !genericTokens.has(token))
+    .join(' ');
+
+  return [...new Set([normalized, simplified].filter((fragment) => fragment && fragment.length >= 3))];
+}
+
+function getPrimarySearchFragment(value) {
+  const fragments = getSearchFragments(value);
+  const primary = fragments.at(-1) || fragments[0] || '';
+  if (!primary) {
+    return '';
+  }
+
+  const tokens = primary.split(' ').filter(Boolean);
+  if (tokens.length > 2) {
+    return tokens.slice(0, 2).join(' ');
+  }
+
+  return primary;
+}
+
+function scoreMatchCandidate(match, resolverQuery, haystack, index) {
+  let score = index === 0 ? 1 : 0;
+
+  const titleFragments = getSearchFragments(resolverQuery?.title || match.title);
+  const homeFragments = getSearchFragments(match.homeTeam);
+  const awayFragments = getSearchFragments(match.awayTeam);
+  const leagueFragments = getSearchFragments(match.league);
+
+  if (titleFragments.some((fragment) => haystack.includes(fragment))) {
+    score += 80;
+  }
+
+  const matchedHome = homeFragments.some((fragment) => haystack.includes(fragment));
+  const matchedAway = awayFragments.some((fragment) => haystack.includes(fragment));
+
+  if (matchedHome) {
+    score += 45;
+  }
+  if (matchedAway) {
+    score += 45;
+  }
+  if (matchedHome && matchedAway) {
+    score += 90;
+  }
+
+  if (leagueFragments.some((fragment) => haystack.includes(fragment))) {
+    score += 10;
+  }
+
+  return score;
+}
+
+function isIgnoredEmbedUrl(url, pageUrl) {
+  const normalizedUrl = toAbsoluteUrl(url, pageUrl);
+  if (!normalizedUrl) {
+    return true;
+  }
+
+  const lower = normalizedUrl.toLowerCase();
+  if (
+    /\.(?:avif|gif|ico|jpe?g|png|svg|webp)(?:[?#].*)?$/i.test(lower) ||
+    lower.includes('blogger.googleusercontent.com/img/') ||
+    lower.includes('youtube.com/live_chat') ||
+    lower.includes('/online.php?c=') ||
+    lower.includes('discord.com/widget') ||
+    lower.includes('chat.whatsapp.com') ||
+    lower.includes('whatsapp.com/channel') ||
+    lower.includes('telegram.me/') ||
+    lower.includes('t.me/') ||
+    lower.includes('instagram.com/') ||
+    lower.includes('facebook.com/sharer') ||
+    lower.includes('facebook.com/share') ||
+    lower.includes('twitter.com/share') ||
+    lower.includes('x.com/intent/') ||
+    lower.includes('linkedin.com/share') ||
+    lower.includes('pinterest.com/pin/create') ||
+    lower.includes('plus.google.com/share')
+  ) {
+    return true;
+  }
+
+  try {
+    const parsedUrl = new URL(normalizedUrl);
+    const parsedPageUrl = pageUrl ? new URL(toAbsoluteUrl(pageUrl, pageUrl)) : null;
+    const path = parsedUrl.pathname.toLowerCase();
+
+    if (
+      path === '/' ||
+      path.startsWith('/search') ||
+      path.startsWith('/p/about') ||
+      path.startsWith('/p/contact') ||
+      path.startsWith('/p/dmca')
+    ) {
+      return true;
+    }
+
+    if (parsedPageUrl && parsedUrl.toString() === parsedPageUrl.toString()) {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
 }
 
 function readScopedText($root, selector, fallback = '') {
@@ -583,7 +736,6 @@ function buildCatalogSports(matches) {
 function extractMatchPageCandidates(html, match, resolverQuery) {
   const $ = load(html);
   const candidates = [];
-  const matchTitle = String(resolverQuery?.title || match.title || '').toLowerCase();
 
   $(PRIVATE_SITE_MATCH_LINK_SELECTOR).each((index, element) => {
     const href =
@@ -598,8 +750,8 @@ function extractMatchPageCandidates(html, match, resolverQuery) {
       return;
     }
 
-    const haystack = `${text} ${absolute}`.toLowerCase();
-    const score = matchTitle && haystack.includes(matchTitle) ? 10 : index === 0 ? 1 : 0;
+    const haystack = normalizeSearchText(`${text} ${absolute}`);
+    const score = scoreMatchCandidate(match, resolverQuery, haystack, index);
     candidates.push({ url: absolute, score });
   });
 
@@ -721,15 +873,7 @@ function extractEmbedCandidates(html, pageUrl) {
       $(element).attr('data-url') ||
       '';
     const url = toAbsoluteUrl(rawUrl, pageUrl);
-    if (!url) {
-      return;
-    }
-    const lower = url.toLowerCase();
-    if (
-      lower.includes('youtube.com/live_chat') ||
-      lower.includes('/online.php?c=') ||
-      lower.includes('discord.com/widget')
-    ) {
+    if (!url || isIgnoredEmbedUrl(url, pageUrl)) {
       return;
     }
 
@@ -918,15 +1062,21 @@ async function resolveProviderChoices(matchPageHtml, matchPageUrl, timeoutMs) {
 
   const resolvedStreams = normalizeStreams(resolvedGroups.flat());
   if (resolvedStreams.length > 0) {
-    if (resolvedStreams.length >= 4) {
-      return resolvedStreams;
-    }
-
     const unresolvedProviderFallbacks = normalizeStreams(
       providerCandidates.slice(providerCandidatesToResolve.length)
     );
-    if (unresolvedProviderFallbacks.length > 0) {
-      return normalizeStreams(resolvedStreams.concat(unresolvedProviderFallbacks));
+    if (
+      unresolvedProviderFallbacks.length > 0 &&
+      resolvedStreams.length < PRIVATE_SITE_PROVIDER_RESOLVE_LIMIT
+    ) {
+      return dedupeCandidates(
+        resolvedStreams.concat(
+          unresolvedProviderFallbacks.slice(
+            0,
+            PRIVATE_SITE_PROVIDER_RESOLVE_LIMIT - resolvedStreams.length
+          )
+        )
+      );
     }
 
     return resolvedStreams;
@@ -948,6 +1098,10 @@ async function resolveFromWebsite(match, resolverQuery, timeoutMs) {
     const searchHtml = await fetchHtml(searchUrl, timeoutMs);
     const candidates = extractMatchPageCandidates(searchHtml, match, resolverQuery);
     candidatePageUrl = candidates[0] || '';
+  }
+
+  if (!candidatePageUrl && PRIVATE_SITE_FALLBACK_PAGE_URL) {
+    candidatePageUrl = toAbsoluteUrl(PRIVATE_SITE_FALLBACK_PAGE_URL);
   }
 
   if (!candidatePageUrl) {

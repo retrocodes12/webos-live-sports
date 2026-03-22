@@ -6,6 +6,7 @@ export interface SportCategory {
   name: string;
   accent: string;
   shortLabel: string;
+  logoUrl?: string;
 }
 
 export interface StreamOption {

@@ -9,6 +9,13 @@ const DEFAULT_ACCENTS = [
   '#f97316',
 ];
 
+const COMPETITION_BRANDING_BY_CODE = {
+  pd: {
+    name: 'LaLiga',
+    shortLabel: 'LL',
+  },
+};
+
 function sanitizeId(input, fallback) {
   const raw = String(input || fallback || '')
     .trim()
@@ -49,6 +56,40 @@ function getEntityLogo(entity) {
   }
 
   return String(entity.crest || entity.logo || entity.emblem || '').trim();
+}
+
+function getCompetitionBranding(input) {
+  const rawCode = String(input?.code || input?.id || '').trim().toLowerCase();
+  const rawName = String(input?.name || input || '').trim();
+
+  if (rawCode && COMPETITION_BRANDING_BY_CODE[rawCode]) {
+    return COMPETITION_BRANDING_BY_CODE[rawCode];
+  }
+
+  if (/^primera division$/i.test(rawName)) {
+    return COMPETITION_BRANDING_BY_CODE.pd;
+  }
+
+  return null;
+}
+
+function getCompetitionDisplayName(input, fallback = '') {
+  const branding = getCompetitionBranding(input);
+  if (branding?.name) {
+    return branding.name;
+  }
+
+  return getEntityName(input, fallback);
+}
+
+function getCompetitionShortLabel(input, fallbackName = '') {
+  const branding = getCompetitionBranding(input);
+  if (branding?.shortLabel) {
+    return branding.shortLabel;
+  }
+
+  const fallback = String(fallbackName || '').trim();
+  return fallback.slice(0, 3).toUpperCase();
 }
 
 function formatStage(stage) {
@@ -134,7 +175,16 @@ function normalizeSports(rawSports, fallbackMatches) {
   const seen = new Set();
 
   explicitSports.forEach((sport, index) => {
-    const name = String(sport?.name || sport?.title || sport?.label || sport?.id || `Sport ${index + 1}`).trim();
+    const name = String(
+      getCompetitionDisplayName(
+        {
+          id: sport?.id || sport?.slug,
+          code: sport?.code,
+          name: sport?.name || sport?.title || sport?.label,
+        },
+        `Sport ${index + 1}`
+      )
+    ).trim();
     const id = sanitizeId(sport?.id || sport?.slug || name, `sport-${index + 1}`);
     if (seen.has(id)) {
       return;
@@ -144,12 +194,26 @@ function normalizeSports(rawSports, fallbackMatches) {
       id,
       name,
       accent: String(sport?.accent || DEFAULT_ACCENTS[index % DEFAULT_ACCENTS.length]),
-      shortLabel: String(sport?.shortLabel || sport?.short || name.slice(0, 3).toUpperCase()),
+      shortLabel: String(
+        sport?.shortLabel ||
+          sport?.short ||
+          getCompetitionShortLabel(
+            {
+              id: sport?.id || sport?.slug,
+              code: sport?.code,
+              name,
+            },
+            name
+          )
+      ),
+      logoUrl: getEntityLogo(sport) || undefined,
     });
   });
 
   fallbackMatches.forEach((match, index) => {
-    const name = String(match.sportName || match.sport || match.categoryName || match.category || match.sportId || 'General');
+    const name = String(
+      match.sportName || match.sport || match.categoryName || match.category || match.sportId || 'General'
+    );
     const id = sanitizeId(match.sportId || match.sport || match.categoryId || name, `derived-${index + 1}`);
     if (seen.has(id)) {
       return;
@@ -159,7 +223,8 @@ function normalizeSports(rawSports, fallbackMatches) {
       id,
       name,
       accent: DEFAULT_ACCENTS[normalized.length % DEFAULT_ACCENTS.length],
-      shortLabel: name.slice(0, 3).toUpperCase(),
+      shortLabel: getCompetitionShortLabel({ id, name }, name),
+      logoUrl: typeof match.sportLogoUrl === 'string' && match.sportLogoUrl ? match.sportLogoUrl : undefined,
     });
   });
 
@@ -203,6 +268,15 @@ function normalizeStream(stream, index) {
 function normalizeMatch(match, index) {
   const competitionName = getEntityName(match?.competition || match?.tournament, '');
   const competitionCode = getEntityName(match?.competition?.code, '');
+  const competitionDisplayName = getCompetitionDisplayName(
+    {
+      id: competitionCode,
+      code: competitionCode,
+      name: competitionName,
+    },
+    competitionName
+  );
+  const competitionLogoUrl = getEntityLogo(match?.competition || match?.tournament);
   const homeTeam = getEntityName(
     match?.homeTeam || match?.home || match?.teamA || match?.participants?.[0],
     'Home'
@@ -251,11 +325,16 @@ function normalizeMatch(match, index) {
         match?.categoryId ||
         match?.category ||
         competitionCode ||
-        competitionName ||
+        competitionDisplayName ||
         'general',
       `sport-${index + 1}`
     ),
-    league: String(match?.league || competitionName || getEntityName(match?.tournament) || 'Authorized Event'),
+    league: String(
+      match?.league ||
+        competitionDisplayName ||
+        getCompetitionDisplayName(match?.tournament) ||
+        'Authorized Event'
+    ),
     round: String(
       match?.round ||
         (match?.matchday != null ? `Matchday ${match.matchday}` : '') ||
@@ -291,10 +370,11 @@ function normalizeMatch(match, index) {
         match?.sport ||
         match?.categoryName ||
         match?.category ||
-        competitionName ||
+        competitionDisplayName ||
         match?.sportId ||
         'General'
     ),
+    sportLogoUrl: competitionLogoUrl || undefined,
   };
 }
 
@@ -313,7 +393,7 @@ export function adaptCatalogPayload(payload) {
     const sports = normalizeSports(payload.sports, normalizedMatches);
     return {
       sports,
-      matches: normalizedMatches.map(({ sportName: _sportName, ...match }) => match),
+      matches: normalizedMatches.map(({ sportName: _sportName, sportLogoUrl: _sportLogoUrl, ...match }) => match),
     };
   }
 
@@ -330,6 +410,6 @@ export function adaptCatalogPayload(payload) {
 
   return {
     sports,
-    matches: normalizedMatches.map(({ sportName: _sportName, ...match }) => match),
+    matches: normalizedMatches.map(({ sportName: _sportName, sportLogoUrl: _sportLogoUrl, ...match }) => match),
   };
 }
