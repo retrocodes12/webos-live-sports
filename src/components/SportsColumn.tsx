@@ -32,7 +32,7 @@ export function SportsColumn({
             <BrandLogo className="brand-logo" />
           </span>
           <div className="sidebar-brand-copy">
-            <span className="sidebar-caption">Sports TV</span>
+            <span className="sidebar-caption">Browse Template</span>
             <h2 className="sidebar-heading">sportzx</h2>
           </div>
         </div>
@@ -50,6 +50,10 @@ export function SportsColumn({
             <strong>{endedCount}</strong>
           </div>
         </div>
+        <div className="sidebar-section-label">
+          <span className="sidebar-caption">Competitions</span>
+          <strong>{sports.length} lanes</strong>
+        </div>
         <div className="sidebar-list">
           {sports.map((sport, index) => {
             const active = sport.id === selectedSportId;
@@ -64,7 +68,7 @@ export function SportsColumn({
                 <span className="sidebar-tile-icon">{sport.shortLabel}</span>
                 <span className="sidebar-tile-copy">
                   <span className="sidebar-tile-name">{sport.name}</span>
-                  <span className="sidebar-tile-meta">{active ? 'Selected lane' : 'Open lane'}</span>
+                  <span className="sidebar-tile-meta">{active ? 'Selected' : 'Browse'}</span>
                 </span>
               </button>
             );

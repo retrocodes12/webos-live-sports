@@ -35,8 +35,10 @@ export function HeroSpotlight({
     mode === 'detail'
       ? selectedStream
         ? `${selectedStream.provider} selected • ${selectedStream.language} • ${selectedStream.quality}`
-        : 'Browse the stream lane below to choose a feed.'
-      : 'Browse the live lane and press enter to open the source picker.';
+        : 'Choose a source from the lane below.'
+      : 'Browse the fixture lane and press enter for sources.';
+  const streamLabel = `${streamCount} ${streamCount === 1 ? 'feed' : 'feeds'}`;
+  const venueLabel = match.venue && match.venue !== 'Venue pending' ? match.venue : 'Broadcast info pending';
 
   return (
     <section className={`hero-spotlight hero-spotlight--${mode}`} style={{ ['--accent' as string]: accent }}>
@@ -54,7 +56,21 @@ export function HeroSpotlight({
         <p className="hero-summary">{match.summary}</p>
         <div className="hero-meta">
           <span>{helperText}</span>
-          <span>{streamCount} feeds available</span>
+          <span>{streamLabel}</span>
+        </div>
+        <div className="hero-facts">
+          <div className="hero-fact-card">
+            <span className="hero-fact-label">Coverage</span>
+            <strong>{streamLabel}</strong>
+          </div>
+          <div className="hero-fact-card">
+            <span className="hero-fact-label">Stage</span>
+            <strong>{match.round}</strong>
+          </div>
+          <div className="hero-fact-card">
+            <span className="hero-fact-label">Venue</span>
+            <strong>{venueLabel}</strong>
+          </div>
         </div>
         <div className="hero-tags">
           {match.tags.slice(0, 4).map((tag) => (
@@ -88,6 +104,10 @@ export function HeroSpotlight({
           />
           <span className="hero-team-label">Away</span>
           <strong>{match.awayTeam}</strong>
+        </div>
+        <div className="hero-score-footer">
+          <span>{mode === 'detail' ? 'Source ready' : 'Browse ready'}</span>
+          <strong>{match.league}</strong>
         </div>
       </div>
     </section>

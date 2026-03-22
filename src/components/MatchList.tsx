@@ -52,8 +52,8 @@ export function MatchList({
     <section className="lane-section">
       <div className="lane-section-head">
         <div>
-          <span className="lane-kicker">Match Lanes</span>
-          <h2 className="lane-title">Live and upcoming fixtures</h2>
+          <span className="lane-kicker">Browse Shelf</span>
+          <h2 className="lane-title">Featured fixtures</h2>
         </div>
         <span className="lane-meta">{matches.length} matches</span>
       </div>
@@ -63,6 +63,7 @@ export function MatchList({
           const cardAccent = accentBySport[match.sportId] || '#2dd4bf';
           const scoreText = getCardScoreText(match);
           const hasScore = Boolean(String(match.scoreLine || '').trim());
+          const feedCount = typeof match.streamCountHint === 'number' ? match.streamCountHint : match.streams.length;
           return (
             <button
               key={match.id}
@@ -95,8 +96,13 @@ export function MatchList({
                 <div className={`match-poster-score${hasScore ? '' : ' is-status'}`}>{scoreText}</div>
               </div>
               <p className="match-poster-summary">{match.summary}</p>
+              <div className="match-poster-meta">
+                <span>{match.round}</span>
+                <span>{feedCount} {feedCount === 1 ? 'feed' : 'feeds'}</span>
+              </div>
               <div className="match-poster-tags">
-                {match.tags.slice(0, 3).map((tag) => (
+                <span className="tag-chip">{match.status === 'live' ? 'Open Sources' : 'Preview Match'}</span>
+                {match.tags.slice(0, 1).map((tag) => (
                   <span key={tag} className="tag-chip">
                     {tag}
                   </span>
