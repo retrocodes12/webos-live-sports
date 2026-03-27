@@ -8,7 +8,7 @@
     "dev:client": "vite",
     "dev:server": "node server.mjs",
     "build": "tsc -b && vite build",
-    "build:webos": "tsc -b && vite build --minify=false --target=es2017",
+    "build:webos": "tsc -b && vite build --base=./ --minify=false --target=es2017",
     "lint": "eslint .",
     "preview": "vite preview",
     "start": "node server.mjs",
