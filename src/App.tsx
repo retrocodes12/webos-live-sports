@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   type DependencyList,
+  type RefObject,
   type ReactNode,
 } from 'react'
 import './App.css'
@@ -754,6 +755,88 @@ function eventClass(type?: string | null) {
   return ''
 }
 
+type RemoteDirection = 'up' | 'down' | 'left' | 'right'
+
+function isFocusableCandidate(element: HTMLElement) {
+  if (element.hasAttribute('disabled') || element.getAttribute('aria-hidden') === 'true') {
+    return false
+  }
+
+  const style = window.getComputedStyle(element)
+  if (style.display === 'none' || style.visibility === 'hidden') {
+    return false
+  }
+
+  const rect = element.getBoundingClientRect()
+  return rect.width > 0 && rect.height > 0
+}
+
+function getFocusableElements(scope?: ParentNode | null) {
+  const root = scope ?? document
+  return Array.from(root.querySelectorAll<HTMLElement>('.F')).filter(isFocusableCandidate)
+}
+
+function scoreDirectionalCandidate(currentRect: DOMRect, nextRect: DOMRect, direction: RemoteDirection) {
+  const currentCenterX = currentRect.left + currentRect.width / 2
+  const currentCenterY = currentRect.top + currentRect.height / 2
+  const nextCenterX = nextRect.left + nextRect.width / 2
+  const nextCenterY = nextRect.top + nextRect.height / 2
+  const deltaX = nextCenterX - currentCenterX
+  const deltaY = nextCenterY - currentCenterY
+
+  if (direction === 'right' && deltaX <= 8) {
+    return Number.POSITIVE_INFINITY
+  }
+  if (direction === 'left' && deltaX >= -8) {
+    return Number.POSITIVE_INFINITY
+  }
+  if (direction === 'down' && deltaY <= 8) {
+    return Number.POSITIVE_INFINITY
+  }
+  if (direction === 'up' && deltaY >= -8) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  const primaryDistance = direction === 'left' || direction === 'right' ? Math.abs(deltaX) : Math.abs(deltaY)
+  const crossDistance = direction === 'left' || direction === 'right' ? Math.abs(deltaY) : Math.abs(deltaX)
+  return primaryDistance * 1000 + crossDistance
+}
+
+function findNextFocusable(current: HTMLElement, candidates: HTMLElement[], direction: RemoteDirection) {
+  const currentRect = current.getBoundingClientRect()
+  let best: HTMLElement | null = null
+  let bestScore = Number.POSITIVE_INFINITY
+
+  for (const candidate of candidates) {
+    if (candidate === current) {
+      continue
+    }
+
+    const score = scoreDirectionalCandidate(currentRect, candidate.getBoundingClientRect(), direction)
+    if (score < bestScore) {
+      best = candidate
+      bestScore = score
+    }
+  }
+
+  return best
+}
+
+function focusElement(element: HTMLElement | null) {
+  if (!element) {
+    return
+  }
+
+  window.requestAnimationFrame(() => {
+    element.focus({ preventScroll: true })
+    element.scrollIntoView({
+      block: 'nearest',
+      inline: 'nearest',
+      behavior: 'smooth',
+    })
+  })
+}
+
 function TeamLogo({
   src,
   alt,
@@ -1059,13 +1142,15 @@ function Sidebar({
   screen,
   expanded,
   onNav,
+  containerRef,
 }: {
   screen: ScreenId
   expanded: boolean
   onNav: (screen: NavItem['id']) => void
+  containerRef?: RefObject<HTMLElement | null>
 }) {
   return (
-    <aside className={`sb${expanded ? ' ex' : ''}`}>
+    <aside ref={containerRef} className={`sb${expanded ? ' ex' : ''}`}>
       <div className="logo">
         <img className="logo-icon" src={BRAND_LOGO_SRC} alt="KICKOFF TV" />
         {expanded ? (
@@ -2477,6 +2562,8 @@ function App() {
   const [selectedMatch, setSelectedMatch] = useState<Match | null>(null)
   const [playerPayload, setPlayerPayload] = useState<PlayerLaunchPayload | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+  const sidebarRef = useRef<HTMLElement | null>(null)
+  const mainRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
     document.body.classList.toggle('desktop-mode', uiMode === 'desktop')
@@ -2513,14 +2600,65 @@ function App() {
     setScreen('player')
   }
 
+  function focusSidebarTarget() {
+    const activeNav = sidebarRef.current?.querySelector<HTMLElement>('.ni.act')
+    focusElement(activeNav ?? getFocusableElements(sidebarRef.current)[0] ?? null)
+  }
+
+  function focusMainTarget() {
+    focusElement(getFocusableElements(mainRef.current)[0] ?? null)
+  }
+
+  function moveFocus(direction: RemoteDirection) {
+    const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const inSidebar = Boolean(activeElement && sidebarRef.current?.contains(activeElement))
+    const scope = inSidebar ? sidebarRef.current : mainRef.current
+    const focusable = getFocusableElements(scope)
+
+    if (!focusable.length) {
+      return false
+    }
+
+    const current = activeElement && focusable.includes(activeElement) ? activeElement : focusable[0]
+    if (!current) {
+      focusElement(focusable[0])
+      return true
+    }
+
+    const next = findNextFocusable(current, focusable, direction)
+    if (next) {
+      focusElement(next)
+      return true
+    }
+
+    return false
+  }
+
   useEffect(() => {
+    if (uiMode !== 'tv') {
+      return undefined
+    }
+
     function onKeyDown(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null
       if (target?.tagName === 'INPUT') {
         return
       }
 
-      if (event.key === 'Escape' || event.key === 'Backspace') {
+      const key = event.key
+      const keyCode = event.keyCode || event.which
+
+      if (key === 'Enter' || key === 'OK' || keyCode === 13) {
+        const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null
+        if (activeElement && activeElement !== document.body) {
+          event.preventDefault()
+          activeElement.click()
+        }
+        return
+      }
+
+      if (key === 'Escape' || key === 'Backspace' || keyCode === 461) {
+        event.preventDefault()
         if (screen === 'player') {
           setScreen('detail')
         } else if (screen === 'detail') {
@@ -2532,19 +2670,52 @@ function App() {
         return
       }
 
-      if (event.key === 'ArrowLeft') {
-        setSidebarExpanded(true)
+      if (key === 'ArrowLeft' || keyCode === 37) {
+        event.preventDefault()
+        if (!sidebarExpanded && screen !== 'player') {
+          setSidebarExpanded(true)
+          window.requestAnimationFrame(() => focusSidebarTarget())
+          return
+        }
+
+        if (!moveFocus('left') && screen !== 'player') {
+          setSidebarExpanded(true)
+          window.requestAnimationFrame(() => focusSidebarTarget())
+        }
         return
       }
 
-      if (event.key === 'ArrowRight') {
-        setSidebarExpanded(false)
+      if (key === 'ArrowRight' || keyCode === 39) {
+        event.preventDefault()
+        const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null
+        const inSidebar = Boolean(activeElement && sidebarRef.current?.contains(activeElement))
+
+        if (sidebarExpanded && inSidebar && screen !== 'player') {
+          setSidebarExpanded(false)
+          window.requestAnimationFrame(() => focusMainTarget())
+          return
+        }
+
+        moveFocus('right')
         return
       }
 
-      if (event.key >= '1' && event.key <= String(NAV_ITEMS.length)) {
-        const navItem = NAV_ITEMS[Number(event.key) - 1]
+      if (key === 'ArrowUp' || keyCode === 38) {
+        event.preventDefault()
+        moveFocus('up')
+        return
+      }
+
+      if (key === 'ArrowDown' || keyCode === 40) {
+        event.preventDefault()
+        moveFocus('down')
+        return
+      }
+
+      if (key >= '1' && key <= String(NAV_ITEMS.length)) {
+        const navItem = NAV_ITEMS[Number(key) - 1]
         if (navItem) {
+          event.preventDefault()
           navigate(navItem.id)
         }
       }
@@ -2552,7 +2723,32 @@ function App() {
 
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [screen, sidebarExpanded])
+  }, [screen, sidebarExpanded, uiMode])
+
+  useEffect(() => {
+    if (uiMode !== 'tv') {
+      return
+    }
+
+    window.requestAnimationFrame(() => {
+      const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null
+      if (activeElement && activeElement !== document.body) {
+        return
+      }
+
+      if (screen === 'player') {
+        focusMainTarget()
+        return
+      }
+
+      if (sidebarExpanded) {
+        focusSidebarTarget()
+        return
+      }
+
+      focusMainTarget()
+    })
+  }, [screen, sidebarExpanded, uiMode])
 
   const appContent =
     screen === 'player' ? (
@@ -2585,9 +2781,15 @@ function App() {
 
   return (
     <div className={`app-shell${sidebarExpanded ? ' expanded' : ''}${screen === 'player' ? ' player-mode' : ''}`}>
-      {screen === 'player' ? null : <Sidebar screen={screen} expanded={sidebarExpanded} onNav={navigate} />}
+      {screen === 'player' ? null : (
+        <Sidebar screen={screen} expanded={sidebarExpanded} onNav={navigate} containerRef={sidebarRef} />
+      )}
 
-      <main className={`mc-wrap${sidebarExpanded ? ' ex' : ''}`} onClick={() => sidebarExpanded && setSidebarExpanded(false)}>
+      <main
+        ref={mainRef}
+        className={`mc-wrap${sidebarExpanded ? ' ex' : ''}`}
+        onClick={() => sidebarExpanded && setSidebarExpanded(false)}
+      >
         {appContent}
       </main>
 
