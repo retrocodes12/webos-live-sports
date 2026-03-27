@@ -1,839 +1,2364 @@
-import { startTransition, useEffect, useMemo, useRef, useState } from 'react';
-
-import { BrandLogo } from './components/BrandLogo';
-import { DetailPanel } from './components/DetailPanel';
-import { HeroSpotlight } from './components/HeroSpotlight';
-import { MatchList } from './components/MatchList';
-import { PlayerView } from './components/PlayerView';
-import { SportsColumn } from './components/SportsColumn';
 import {
-  invalidateMatchStreams,
-  loadMatchStreams,
-  loadSportsCatalog,
-  preloadMatchStreams,
-} from './services/api';
-import type { SportsCatalog, StreamOption } from './types';
-import { isBackIntent, isLikelyWebOsRuntime } from './utils/platform';
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DependencyList,
+  type ReactNode,
+} from 'react'
+import './App.css'
 
-type Screen = 'home' | 'detail' | 'player';
-type HomeFocusArea = 'sports' | 'matches';
-type DetailFocusArea = 'summary' | 'streams';
+const API_BASE = '/api/sportsdb'
 
-const EMPTY_CATALOG: SportsCatalog = {
-  sports: [],
-  matches: [],
-};
-const CATALOG_REFRESH_INTERVAL_MS = 30000;
-const STREAM_PREFETCH_DELAY_MS = 220;
-const ADJACENT_STREAM_PREFETCH_DELAY_MS = 650;
-const EMPTY_STREAMS: StreamOption[] = [];
+type ScreenId =
+  | 'home'
+  | 'live'
+  | 'competitions'
+  | 'teams'
+  | 'search'
+  | 'settings'
+  | 'detail'
+  | 'player'
 
-interface NavigationSnapshot {
-  safeScreen: Screen;
-  homeFocusArea: HomeFocusArea;
-  detailFocusArea: DetailFocusArea;
-  hasMatch: boolean;
-  sportsLength: number;
-  filteredMatchesLength: number;
-  selectedMatchIndex: number;
-  selectedStreamIndex: number;
-  selectedMatchId: string;
-  selectedMatchStreamsLength: number;
-  selectedStreamKind: StreamOption['kind'] | null;
-  hasSelectedStream: boolean;
-  canRetrySelectedMatchLookup: boolean;
+type League = {
+  id: string
+  name: string
+  country: string
+  flag: string
+  short: string
 }
 
-function formatClockLabel(timestamp = Date.now()) {
-  return new Intl.DateTimeFormat('en-US', {
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(new Date(timestamp));
+type LiveFeed = League & {
+  source: 'sportsdb' | 'sportzx' | 'mixed'
+  sportsdbLeagueId?: string
+  sportzxIds?: string[]
 }
 
-function clampIndex(value: number, length: number) {
-  if (length <= 0) {
-    return 0;
-  }
-  return Math.min(Math.max(value, 0), length - 1);
+type SportzxSport = {
+  id: string
+  name: string
+  short: string
+  flag: string
+  count: number
 }
 
-export default function App() {
-  const [catalog, setCatalog] = useState<SportsCatalog>(EMPTY_CATALOG);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+type NavItem = {
+  id: Exclude<ScreenId, 'detail' | 'player'>
+  icon: string
+  label: string
+  live?: boolean
+}
 
-  const [screen, setScreen] = useState<Screen>('home');
-  const [selectedSportIndex, setSelectedSportIndex] = useState(0);
-  const [selectedMatchIndex, setSelectedMatchIndex] = useState(0);
-  const [selectedStreamIndex, setSelectedStreamIndex] = useState(0);
-  const [homeFocusArea, setHomeFocusArea] = useState<HomeFocusArea>('matches');
-  const [detailFocusArea, setDetailFocusArea] = useState<DetailFocusArea>('streams');
-  const [streamsByMatchId, setStreamsByMatchId] = useState<Record<string, StreamOption[]>>({});
-  const [streamErrorsByMatchId, setStreamErrorsByMatchId] = useState<Record<string, string>>({});
-  const [loadingStreamMatchIds, setLoadingStreamMatchIds] = useState<Record<string, boolean>>({});
-  const [streamLookupDoneByMatchId, setStreamLookupDoneByMatchId] = useState<Record<string, boolean>>({});
-  const [streamLookupNonceByMatchId, setStreamLookupNonceByMatchId] = useState<Record<string, number>>({});
-  const [isRefreshingCatalog, setIsRefreshingCatalog] = useState(false);
-  const [lastCatalogSyncAt, setLastCatalogSyncAt] = useState<number | null>(null);
-  const [lastCatalogLatencyMs, setLastCatalogLatencyMs] = useState<number | null>(null);
-  const [nowLabel, setNowLabel] = useState(() => formatClockLabel());
-  const catalogRef = useRef(catalog);
-  const screenRef = useRef(screen);
-  const catalogRequestInFlightRef = useRef(false);
-  const selectedSportIdRef = useRef('');
-  const selectedMatchIdRef = useRef('');
-  const navigationStateRef = useRef<NavigationSnapshot>({
-    safeScreen: 'home',
-    homeFocusArea: 'matches',
-    detailFocusArea: 'streams',
-    hasMatch: false,
-    sportsLength: 0,
-    filteredMatchesLength: 0,
-    selectedMatchIndex: 0,
-    selectedStreamIndex: 0,
-    selectedMatchId: '',
-    selectedMatchStreamsLength: 0,
-    selectedStreamKind: null,
-    hasSelectedStream: false,
-    canRetrySelectedMatchLookup: false,
-  });
-  const isTvRuntime = useMemo(() => isLikelyWebOsRuntime(), []);
+type Match = {
+  idEvent?: string
+  streamLookupId?: string | null
+  streamSource?: 'sportsdb' | 'sportzx' | null
+  strProvider?: string | null
+  intRound?: number | string | null
+  strLeague?: string | null
+  strSeason?: string | null
+  strHomeTeam?: string | null
+  strAwayTeam?: string | null
+  strHomeTeamBadge?: string | null
+  strAwayTeamBadge?: string | null
+  intHomeScore?: number | string | null
+  intAwayScore?: number | string | null
+  strStatus?: string | null
+  strProgress?: string | null
+  strTime?: string | null
+  dateEvent?: string | null
+  strVenue?: string | null
+}
 
-  function handleBackNavigation() {
-    if (screenRef.current === 'player') {
-      setScreen('detail');
-      return true;
+type StandingRow = {
+  idTeam?: string
+  strTeam?: string | null
+  strBadge?: string | null
+  intPlayed?: string | null
+  intWin?: string | null
+  intDraw?: string | null
+  intLoss?: string | null
+  intGoalsFor?: string | null
+  intGoalsAgainst?: string | null
+  intGoalDifference?: string | null
+  intPoints?: string | null
+  strForm?: string | null
+}
+
+type Team = {
+  idTeam?: string
+  strTeam?: string | null
+  strBadge?: string | null
+  strLeague?: string | null
+  intFormedYear?: string | null
+  strStadium?: string | null
+  intStadiumCapacity?: string | null
+  strCountry?: string | null
+  strDescriptionEN?: string | null
+}
+
+type TimelineEvent = {
+  strTeam?: string | null
+  strPlayer?: string | null
+  strAssist?: string | null
+  strType?: string | null
+  strTimeElapsed?: string | null
+}
+
+type EventStat = {
+  strStat?: string | null
+  intHome?: string | null
+  intAway?: string | null
+}
+
+type LineupPlayer = {
+  strTeam?: string | null
+  strPlayer?: string | null
+  intNumber?: string | null
+  strPosition?: string | null
+}
+
+type StreamOption = {
+  id: string
+  label: string
+  provider: string
+  quality: string
+  language: string
+  kind: 'hls' | 'dash' | 'mp4' | 'embed'
+  url: string
+  authorized: boolean
+  drm?: boolean
+  notes?: string
+  headers?: Record<string, string>
+}
+
+type MatchStreams = {
+  streams: StreamOption[]
+  pending?: boolean
+  message?: string
+}
+
+type PlayerLaunchPayload = {
+  stream: StreamOption
+  matchTitle: string
+  competition: string
+  venue: string
+  kickoff: string
+}
+
+type UIMode = 'tv' | 'desktop'
+
+const LEAGUES: League[] = [
+  { id: '4328', name: 'Premier League', country: 'England', flag: '🏴', short: 'PL' },
+  { id: '4335', name: 'La Liga', country: 'Spain', flag: '🇪🇸', short: 'LL' },
+]
+
+const BASE_LIVE_FEEDS: LiveFeed[] = [
+  {
+    id: '4328',
+    name: 'Premier League',
+    country: 'England',
+    flag: '🏴',
+    short: 'PL',
+    source: 'sportsdb',
+    sportsdbLeagueId: '4328',
+  },
+  {
+    id: '4335',
+    name: 'La Liga',
+    country: 'Spain',
+    flag: '🇪🇸',
+    short: 'LL',
+    source: 'mixed',
+    sportsdbLeagueId: '4335',
+    sportzxIds: ['laliga'],
+  },
+  {
+    id: 'worldcupqualifying',
+    name: 'World Cup',
+    country: 'Global',
+    flag: '🌍',
+    short: 'WC',
+    source: 'sportzx',
+    sportzxIds: ['worldcupqualifying'],
+  },
+]
+
+const MERGED_SPORTZX_IDS = new Set(['laliga', 'worldcupqualifying'])
+
+const NAV_ITEMS: NavItem[] = [
+  { id: 'home', icon: '⌂', label: 'Home' },
+  { id: 'live', icon: '▶', label: 'Live', live: true },
+  { id: 'competitions', icon: '🏆', label: 'Leagues' },
+  { id: 'teams', icon: '👥', label: 'Teams' },
+  { id: 'search', icon: '⌕', label: 'Search' },
+  { id: 'settings', icon: '⚙', label: 'Settings' },
+]
+
+function getCurrentSeason(date = new Date()) {
+  const currentYear = date.getFullYear()
+  const startYear = date.getMonth() >= 6 ? currentYear : currentYear - 1
+  return `${startYear}-${startYear + 1}`
+}
+
+const SEASON = getCurrentSeason()
+
+async function apiFetch<T>(path: string) {
+  const response = await fetch(`${API_BASE}/${path}`)
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`)
+  }
+  return (await response.json()) as T
+}
+
+function useApi<T>(factory: () => Promise<T>, deps: DependencyList) {
+  const [data, setData] = useState<T | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    setLoading(true)
+    setError(null)
+    setData(null)
+
+    factory()
+      .then((result) => {
+        if (!alive) {
+          return
+        }
+        setData(result)
+        setLoading(false)
+      })
+      .catch((err: unknown) => {
+        if (!alive) {
+          return
+        }
+        setError(err instanceof Error ? err.message : 'Unknown error')
+        setLoading(false)
+      })
+
+    return () => {
+      alive = false
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps)
 
-    if (screenRef.current === 'detail') {
-      setScreen('home');
-      return true;
-    }
+  return { data, loading, error }
+}
 
-    return true;
+function buildImageUrl(src?: string | null, size: 'tiny' | 'small' | 'medium' | 'large' = 'tiny') {
+  if (!src) {
+    return ''
+  }
+  if (/\/(tiny|small|medium|large)$/.test(src)) {
+    return src
+  }
+  return `${src}/${size}`
+}
+
+function parseScore(value: Match['intHomeScore'] | Match['intAwayScore']) {
+  if (value === null || value === undefined || value === '') {
+    return null
+  }
+  return String(value)
+}
+
+function isLiveMatch(match: Match) {
+  const status = (match.strStatus ?? '').toUpperCase()
+  return ['1H', '2H', 'HT', 'ET', 'PEN', 'LIVE'].some((token) => status.includes(token))
+}
+
+function isFinishedMatch(match: Match) {
+  const status = (match.strStatus ?? '').toUpperCase()
+  const hasScore = parseScore(match.intHomeScore) !== null && parseScore(match.intAwayScore) !== null
+  return (
+    status.includes('MATCH FINISHED') ||
+    status.includes('FT') ||
+    (hasScore && !isLiveMatch(match) && status !== '')
+  )
+}
+
+function matchTimeValue(match: Match) {
+  const cleanTime = (match.strTime ?? '').replace(/([+-]\d{2}:\d{2}|Z)$/, '').trim()
+  return `${match.dateEvent ?? '9999-99-99'} ${cleanTime || '99:99'}`
+}
+
+function formatKickoff(time?: string | null, date?: string | null) {
+  if (!time) {
+    return 'TBA'
   }
 
-  useEffect(() => {
-    document.documentElement.classList.toggle('webos-runtime', isTvRuntime);
-    return () => {
-      document.documentElement.classList.remove('webos-runtime');
-    };
-  }, [isTvRuntime]);
+  try {
+    const suffix = time.match(/([+-]\d{2}:\d{2}|Z)$/)?.[1] ?? 'Z'
+    const clean = time.replace(/([+-]\d{2}:\d{2}|Z)$/, '').trim()
+    const isoDate = date ?? new Date().toISOString().slice(0, 10)
+    const parsed = new Date(`${isoDate}T${clean}${suffix}`)
 
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      setNowLabel(formatClockLabel());
-    }, 30000);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, []);
-
-  const sports = catalog.sports;
-  const selectedSport = sports[selectedSportIndex] || sports[0];
-
-  const filteredMatches = useMemo(() => {
-    if (!selectedSport || selectedSport.id === 'all') {
-      return catalog.matches;
-    }
-    return catalog.matches.filter((match) => match.sportId === selectedSport.id);
-  }, [catalog.matches, selectedSport]);
-
-  const selectedMatch = filteredMatches[selectedMatchIndex] || filteredMatches[0] || null;
-  const selectedMatchLookupNonce = selectedMatch
-    ? streamLookupNonceByMatchId[selectedMatch.id] || 0
-    : 0;
-  const selectedMatchStreams = useMemo(() => {
-    if (!selectedMatch) {
-      return EMPTY_STREAMS;
+    if (Number.isNaN(parsed.getTime())) {
+      return time
     }
 
-    if (Object.prototype.hasOwnProperty.call(streamsByMatchId, selectedMatch.id)) {
-      return streamsByMatchId[selectedMatch.id] || EMPTY_STREAMS;
-    }
+    return new Intl.DateTimeFormat(undefined, {
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(parsed)
+  } catch {
+    return time
+  }
+}
 
-    return selectedMatch.streams || EMPTY_STREAMS;
-  }, [selectedMatch, streamsByMatchId]);
-  const selectedMatchView = useMemo(
-    () => (selectedMatch ? { ...selectedMatch, streams: selectedMatchStreams } : null),
-    [selectedMatch, selectedMatchStreams]
-  );
-  const selectedStream = selectedMatchStreams[selectedStreamIndex] || selectedMatchStreams[0] || null;
-  const safeScreen: Screen = screen === 'player' && !selectedStream ? 'detail' : screen;
+function createPlayerLaunchPayload(match: Match, stream: StreamOption): PlayerLaunchPayload {
+  return {
+    stream,
+    matchTitle: `${match.strHomeTeam ?? 'Home'} vs ${match.strAwayTeam ?? 'Away'}`,
+    competition: match.strLeague ?? 'Live Stream',
+    venue: match.strVenue ?? 'Venue pending',
+    kickoff: match.dateEvent ?? 'Date pending',
+  }
+}
 
-  useEffect(() => {
-    if (screen === 'player' && !selectedStream) {
-      setScreen(selectedMatch ? 'detail' : 'home');
-    }
-  }, [screen, selectedMatch, selectedStream]);
+function formatHeaderDate(date = new Date()) {
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(date)
+}
 
-  const accentBySport = useMemo(
-    () =>
-      sports.reduce<Record<string, string>>((accumulator, sport) => {
-        accumulator[sport.id] = sport.accent;
-        return accumulator;
-      }, {}),
-    [sports]
-  );
-  const selectedAccent = selectedMatch ? accentBySport[selectedMatch.sportId] || '#6f7cff' : '#6f7cff';
-  const { liveCount, upcomingCount } = useMemo(
-    () =>
-      catalog.matches.reduce(
-        (totals, match) => {
-          if (match.status === 'live') {
-            totals.liveCount += 1;
-          } else if (match.status === 'upcoming') {
-            totals.upcomingCount += 1;
-          }
-          return totals;
-        },
-        { liveCount: 0, upcomingCount: 0 }
-      ),
-    [catalog.matches]
-  );
-  const endedCount = Math.max(0, catalog.matches.length - liveCount - upcomingCount);
-  const currentScreenLabel =
-    safeScreen === 'home' ? 'Browse' : safeScreen === 'detail' ? 'Source Detail' : 'Player';
-  const syncLabel = isRefreshingCatalog
-    ? 'Refreshing the live board in the background.'
-    : lastCatalogSyncAt
-      ? `Last sync at ${new Intl.DateTimeFormat('en-US', {
-          hour: 'numeric',
-          minute: '2-digit',
-        }).format(new Date(lastCatalogSyncAt))}${
-          lastCatalogLatencyMs ? ` • ${lastCatalogLatencyMs} ms` : ''
-        }`
-      : 'Waiting for the first live sync.';
-  const canRetrySelectedMatchLookup = Boolean(
-    selectedMatch &&
-    !loadingStreamMatchIds[selectedMatch.id] &&
-    (!selectedMatchStreams.length || streamErrorsByMatchId[selectedMatch.id])
-  );
-
-  catalogRef.current = catalog;
-  screenRef.current = screen;
-  selectedSportIdRef.current = selectedSport?.id || '';
-  selectedMatchIdRef.current = selectedMatch?.id || '';
-  navigationStateRef.current = {
-    safeScreen,
-    homeFocusArea,
-    detailFocusArea,
-    hasMatch: Boolean(selectedMatch),
-    sportsLength: sports.length,
-    filteredMatchesLength: filteredMatches.length,
-    selectedMatchIndex,
-    selectedStreamIndex,
-    selectedMatchId: selectedMatch?.id || '',
-    selectedMatchStreamsLength: selectedMatchStreams.length,
-    selectedStreamKind: selectedStream?.kind || null,
-    hasSelectedStream: Boolean(selectedStream),
-    canRetrySelectedMatchLookup,
-  };
-
-  function retryStreamsForMatch(matchId: string) {
-    invalidateMatchStreams(matchId);
-    setStreamsByMatchId((current) => {
-      const next = { ...current };
-      delete next[matchId];
-      return next;
-    });
-    setStreamErrorsByMatchId((current) => ({
-      ...current,
-      [matchId]: '',
-    }));
-    setStreamLookupDoneByMatchId((current) => {
-      const next = { ...current };
-      delete next[matchId];
-      return next;
-    });
-    setStreamLookupNonceByMatchId((current) => ({
-      ...current,
-      [matchId]: (current[matchId] || 0) + 1,
-    }));
+function formatRelativeMatchDay(dateString?: string | null) {
+  if (!dateString) {
+    return ''
   }
 
-  useEffect(() => {
-    let cancelled = false;
+  const target = new Date(`${dateString}T12:00:00`)
+  const today = new Date()
+  today.setHours(12, 0, 0, 0)
+  const tomorrow = new Date(today)
+  tomorrow.setDate(today.getDate() + 1)
 
-    const refreshCatalog = async ({ showLoading = false } = {}) => {
-      if (catalogRequestInFlightRef.current) {
-        return;
-      }
-
-      catalogRequestInFlightRef.current = true;
-      const requestStartedAt = performance.now();
-
-      try {
-        if (showLoading) {
-          setLoading(true);
-          setError('');
-        } else {
-          setIsRefreshingCatalog(true);
-        }
-
-        const nextCatalog = await loadSportsCatalog();
-        if (!cancelled) {
-          const nextLatencyMs = Math.round(performance.now() - requestStartedAt);
-          startTransition(() => {
-            setCatalog(nextCatalog);
-          });
-          setError('');
-          setLastCatalogSyncAt(Date.now());
-          setLastCatalogLatencyMs(nextLatencyMs);
-
-          const nextSportId = selectedSportIdRef.current;
-          const nextSportIndex = nextSportId
-            ? nextCatalog.sports.findIndex((sport) => sport.id === nextSportId)
-            : 0;
-          const resolvedSportIndex = clampIndex(
-            nextSportIndex >= 0 ? nextSportIndex : 0,
-            nextCatalog.sports.length
-          );
-          const nextSelectedSport =
-            nextCatalog.sports[resolvedSportIndex] || nextCatalog.sports[0];
-          const nextFilteredMatches =
-            !nextSelectedSport || nextSelectedSport.id === 'all'
-              ? nextCatalog.matches
-              : nextCatalog.matches.filter((match) => match.sportId === nextSelectedSport.id);
-          const nextMatchId = selectedMatchIdRef.current;
-          const nextMatchIndex = nextMatchId
-            ? nextFilteredMatches.findIndex((match) => match.id === nextMatchId)
-            : 0;
-
-          startTransition(() => {
-            setSelectedSportIndex(resolvedSportIndex);
-            setSelectedMatchIndex(
-              clampIndex(nextMatchIndex >= 0 ? nextMatchIndex : 0, nextFilteredMatches.length)
-            );
-          });
-        }
-      } catch (nextError) {
-        if (
-          !cancelled &&
-          !catalogRef.current.sports.length &&
-          !catalogRef.current.matches.length
-        ) {
-          setError(nextError instanceof Error ? nextError.message : 'Failed to load sports catalog');
-        }
-      } finally {
-        catalogRequestInFlightRef.current = false;
-        if (!cancelled && showLoading) {
-          setLoading(false);
-        }
-        if (!cancelled) {
-          setIsRefreshingCatalog(false);
-        }
-      }
-    };
-
-    const handleForegroundRefresh = () => {
-      if (document.visibilityState === 'visible' && screenRef.current !== 'player') {
-        void refreshCatalog();
-      }
-    };
-
-    void refreshCatalog({ showLoading: true });
-
-    const intervalId = window.setInterval(() => {
-      if (document.visibilityState !== 'visible' || screenRef.current === 'player') {
-        return;
-      }
-
-      void refreshCatalog();
-    }, CATALOG_REFRESH_INTERVAL_MS);
-
-    window.addEventListener('focus', handleForegroundRefresh);
-    document.addEventListener('visibilitychange', handleForegroundRefresh);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-      window.removeEventListener('focus', handleForegroundRefresh);
-      document.removeEventListener('visibilitychange', handleForegroundRefresh);
-    };
-  }, []);
-
-  useEffect(() => {
-    setSelectedMatchIndex((current) => clampIndex(current, filteredMatches.length));
-  }, [filteredMatches.length]);
-
-  useEffect(() => {
-    setSelectedStreamIndex((current) => clampIndex(current, selectedMatchStreams.length || 0));
-  }, [selectedMatch?.id, selectedMatchStreams.length]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const hydrateStreams = async () => {
-      if (!selectedMatch || screen === 'home') {
-        return;
-      }
-
-      if ((selectedMatch.streams || []).length > 0 || streamLookupDoneByMatchId[selectedMatch.id]) {
-        return;
-      }
-
-      if (loadingStreamMatchIds[selectedMatch.id]) {
-        return;
-      }
-
-      try {
-        setLoadingStreamMatchIds((current) => ({ ...current, [selectedMatch.id]: true }));
-        setStreamErrorsByMatchId((current) => ({ ...current, [selectedMatch.id]: '' }));
-        const lookupResult = await loadMatchStreams(selectedMatch.id, {
-          force: selectedMatchLookupNonce > 0,
-        });
-        if (!cancelled) {
-          startTransition(() => {
-            setStreamsByMatchId((current) => ({
-              ...current,
-              [selectedMatch.id]: lookupResult.streams,
-            }));
-            setStreamLookupDoneByMatchId((current) => ({ ...current, [selectedMatch.id]: true }));
-          });
-        }
-      } catch (nextError) {
-        if (!cancelled) {
-          setStreamErrorsByMatchId((current) => ({
-            ...current,
-            [selectedMatch.id]:
-              nextError instanceof Error ? nextError.message : 'Failed to load streams',
-          }));
-        }
-      } finally {
-        if (!cancelled) {
-          setLoadingStreamMatchIds((current) => ({ ...current, [selectedMatch.id]: false }));
-        }
-      }
-    };
-
-    void hydrateStreams();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [screen, selectedMatch, selectedMatchLookupNonce]);
-
-  useEffect(() => {
-    if (!selectedMatch) {
-      return;
-    }
-
-    if ((selectedMatch.streams || []).length > 0 || streamLookupDoneByMatchId[selectedMatch.id]) {
-      return;
-    }
-
-    if (loadingStreamMatchIds[selectedMatch.id] || safeScreen === 'player') {
-      return;
-    }
-
-    let cancelled = false;
-    const prefetchMatchId = selectedMatch.id;
-    const prefetchTimerId = window.setTimeout(() => {
-      void loadMatchStreams(prefetchMatchId)
-        .then((lookupResult) => {
-          if (cancelled) {
-            return;
-          }
-
-          startTransition(() => {
-            setStreamsByMatchId((current) =>
-              current[prefetchMatchId] === lookupResult.streams
-                ? current
-                : {
-                    ...current,
-                    [prefetchMatchId]: lookupResult.streams,
-                  }
-            );
-            setStreamLookupDoneByMatchId((current) =>
-              current[prefetchMatchId]
-                ? current
-                : {
-                    ...current,
-                    [prefetchMatchId]: true,
-                  }
-            );
-          });
-        })
-        .catch(() => {});
-    }, safeScreen === 'home' ? STREAM_PREFETCH_DELAY_MS : 0);
-
-    const adjacentMatch = filteredMatches[selectedMatchIndex + 1] || null;
-    const shouldPrefetchAdjacentMatch =
-      safeScreen === 'home' &&
-      adjacentMatch &&
-      !(adjacentMatch.streams || []).length &&
-      !streamLookupDoneByMatchId[adjacentMatch.id];
-    const adjacentPrefetchTimerId = shouldPrefetchAdjacentMatch
-      ? window.setTimeout(() => {
-          if (!cancelled && adjacentMatch) {
-            void preloadMatchStreams(adjacentMatch.id);
-          }
-        }, ADJACENT_STREAM_PREFETCH_DELAY_MS)
-      : 0;
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(prefetchTimerId);
-      if (adjacentPrefetchTimerId) {
-        window.clearTimeout(adjacentPrefetchTimerId);
-      }
-    };
-  }, [
-    filteredMatches,
-    loadingStreamMatchIds,
-    safeScreen,
-    selectedMatch,
-    selectedMatchIndex,
-    streamLookupDoneByMatchId,
-  ]);
-
-  useEffect(() => {
-    if (typeof window.history?.pushState !== 'function') {
-      return;
-    }
-
-    const stateKey = 'sportzx-app-shell';
-    const stateValue = { [stateKey]: true };
-
-    window.history.replaceState(stateValue, '', window.location.href);
-    window.history.pushState(stateValue, '', window.location.href);
-
-    const handlePopState = () => {
-      handleBackNavigation();
-      window.history.pushState(stateValue, '', window.location.href);
-    };
-
-    window.addEventListener('popstate', handlePopState);
-    return () => {
-      window.removeEventListener('popstate', handlePopState);
-    };
-  }, []);
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      const key = event.key;
-      const isBack = isBackIntent(event);
-      const {
-        safeScreen: currentScreen,
-        homeFocusArea: currentHomeFocusArea,
-        detailFocusArea: currentDetailFocusArea,
-        hasMatch,
-        sportsLength,
-        filteredMatchesLength,
-        selectedMatchIndex: currentSelectedMatchIndex,
-        selectedMatchId: currentSelectedMatchId,
-        selectedMatchStreamsLength,
-        selectedStreamKind,
-        hasSelectedStream,
-        canRetrySelectedMatchLookup: canRetrySelectedMatchLookupCurrent,
-      } = navigationStateRef.current;
-
-      if (isBack) {
-        event.preventDefault();
-        event.stopPropagation();
-        handleBackNavigation();
-        return;
-      }
-
-      if (!hasMatch) {
-        return;
-      }
-
-      if (currentScreen === 'home') {
-        if (currentHomeFocusArea === 'sports') {
-          if (key === 'ArrowUp') {
-            event.preventDefault();
-            setSelectedSportIndex((current) => clampIndex(current - 1, sportsLength));
-            return;
-          }
-          if (key === 'ArrowDown') {
-            event.preventDefault();
-            setSelectedSportIndex((current) => clampIndex(current + 1, sportsLength));
-            return;
-          }
-          if (key === 'ArrowRight') {
-            event.preventDefault();
-            setHomeFocusArea('matches');
-            return;
-          }
-        } else {
-          if (key === 'ArrowLeft') {
-            event.preventDefault();
-            if (currentSelectedMatchIndex > 0) {
-              setSelectedMatchIndex((current) => clampIndex(current - 1, filteredMatchesLength));
-            } else {
-              setHomeFocusArea('sports');
-            }
-            return;
-          }
-          if (key === 'ArrowRight') {
-            event.preventDefault();
-            setSelectedMatchIndex((current) => clampIndex(current + 1, filteredMatchesLength));
-            return;
-          }
-          if (key === 'ArrowUp') {
-            event.preventDefault();
-            setHomeFocusArea('sports');
-            return;
-          }
-          if (key === 'Enter') {
-            event.preventDefault();
-            setScreen('detail');
-            setDetailFocusArea('streams');
-            return;
-          }
-        }
-        return;
-      }
-
-      if (currentScreen === 'detail') {
-        if (currentDetailFocusArea === 'summary') {
-          if (key === 'ArrowRight' || key === 'ArrowDown') {
-            event.preventDefault();
-            setDetailFocusArea('streams');
-            return;
-          }
-        } else {
-          if (key === 'ArrowUp') {
-            event.preventDefault();
-            setDetailFocusArea('summary');
-            return;
-          }
-          if (key === 'ArrowLeft') {
-            event.preventDefault();
-            if (navigationStateRef.current.selectedStreamIndex > 0) {
-              setSelectedStreamIndex((current) => clampIndex(current - 1, selectedMatchStreamsLength));
-            } else {
-              setDetailFocusArea('summary');
-            }
-            return;
-          }
-          if (key === 'ArrowRight') {
-            event.preventDefault();
-            setSelectedStreamIndex((current) => clampIndex(current + 1, selectedMatchStreamsLength));
-            return;
-          }
-          if (key === 'Enter') {
-            event.preventDefault();
-            if (hasSelectedStream) {
-              setScreen('player');
-            } else if (currentSelectedMatchId && canRetrySelectedMatchLookupCurrent) {
-              retryStreamsForMatch(currentSelectedMatchId);
-            }
-            return;
-          }
-        }
-        return;
-      }
-
-      if (currentScreen === 'player') {
-        if (selectedStreamKind === 'embed') {
-          if (key === 'Enter') {
-            event.preventDefault();
-            const embedFrame = document.querySelector('.player-embed') as HTMLIFrameElement | null;
-            embedFrame?.focus();
-          }
-          return;
-        }
-
-        const video = document.querySelector('.player-video') as HTMLVideoElement | null;
-
-        if (key === 'Enter') {
-          event.preventDefault();
-          if (!video) {
-            return;
-          }
-          if (video.paused) {
-            void video.play().catch(() => {});
-          } else {
-            video.pause();
-          }
-          return;
-        }
-
-        if (key === 'ArrowLeft') {
-          event.preventDefault();
-          if (video) {
-            video.currentTime = Math.max(0, video.currentTime - 15);
-          }
-          return;
-        }
-
-        if (key === 'ArrowRight') {
-          event.preventDefault();
-          if (video) {
-            video.currentTime = Math.min(video.duration || video.currentTime + 15, video.currentTime + 15);
-          }
-        }
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, []);
-
-  if (loading) {
-    return (
-      <div className="app-shell">
-        <div className="panel loading-panel">
-          <span className="panel-logo-shell">
-            <BrandLogo className="panel-logo" />
-          </span>
-          <span className="panel-kicker">sportzx</span>
-          <h1>Loading your sports desk</h1>
-          <p>Refreshing the live sports catalog.</p>
-        </div>
-      </div>
-    );
+  if (target.toDateString() === today.toDateString()) {
+    return 'Today'
+  }
+  if (target.toDateString() === tomorrow.toDateString()) {
+    return 'Tomorrow'
   }
 
-  if (error) {
-    return (
-      <div className="app-shell">
-        <div className="panel error-panel">
-          <span className="panel-logo-shell">
-            <BrandLogo className="panel-logo" />
-          </span>
-          <span className="panel-kicker">Catalog Error</span>
-          <h1>Feed directory unavailable</h1>
-          <p>{error}</p>
-          <p className="error-hint">
-            Set <code>VITE_SPORTS_API_BASE_URL</code> to your authorized backend, or use the built-in mock catalog.
-          </p>
-        </div>
-      </div>
-    );
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  }).format(target)
+}
+
+function formatProviderLabel(provider?: string | null): string {
+  const raw = String(provider ?? '').trim()
+  if (!raw) {
+    return 'Unknown Source'
   }
 
-  if (!selectedMatch || !selectedSport) {
-    return (
-      <div className="app-shell">
-        <div className="panel error-panel">
-          <span className="panel-logo-shell">
-            <BrandLogo className="panel-logo" />
-          </span>
-          <span className="panel-kicker">No Matches</span>
-          <h1>Your catalog is empty</h1>
-          <p>Add authorized matches and streams to the backend payload.</p>
-        </div>
-      </div>
-    );
+  const candidate = raw
+    .replace(/^https?:\/\//i, '')
+    .replace(/^www\./i, '')
+    .split('/')[0]
+    .trim()
+    .toLowerCase()
+
+  if (!candidate) {
+    return 'Unknown Source'
+  }
+
+  if (/^live\d+\.totalsportek\.foo$/i.test(candidate) || candidate.includes('totalsportek')) {
+    return 'TotalSportek'
+  }
+  if (candidate.includes('fsportshd') || candidate.includes('b4xsports')) {
+    return 'B4xSports'
+  }
+  if (candidate.includes('hesgoal')) {
+    return 'HesGoal TV'
+  }
+  return 'Other Sources'
+}
+
+function formatSourceHost(value?: string | null) {
+  const raw = String(value ?? '').trim()
+  if (!raw) {
+    return 'Unknown host'
+  }
+
+  const candidate = raw
+    .replace(/^https?:\/\//i, '')
+    .replace(/^www\./i, '')
+    .split('/')[0]
+    .trim()
+
+  return candidate || 'Unknown host'
+}
+
+function buildStreamBadge(provider?: string | null) {
+  const label = formatProviderLabel(provider).replace(/[^A-Za-z0-9]/g, '')
+  return label.slice(0, 2).toUpperCase() || 'ST'
+}
+
+function progressPercent(progress?: string | null) {
+  const minute = Number.parseInt(progress ?? '', 10)
+  if (Number.isNaN(minute)) {
+    return 0
+  }
+  return Math.max(0, Math.min(100, (minute / 90) * 100))
+}
+
+function positionClass(index: number, total: number) {
+  if (index < 4) {
+    return 'cl'
+  }
+  if (index < 6) {
+    return 'el'
+  }
+  if (index >= total - 3) {
+    return 'rel'
+  }
+  return ''
+}
+
+function eventIcon(type?: string | null) {
+  const value = (type ?? '').toLowerCase()
+  if (value.includes('goal')) {
+    return '⚽'
+  }
+  if (value.includes('yellow')) {
+    return '🟨'
+  }
+  if (value.includes('red')) {
+    return '🟥'
+  }
+  if (value.includes('sub')) {
+    return '🔄'
+  }
+  return '●'
+}
+
+function eventClass(type?: string | null) {
+  const value = (type ?? '').toLowerCase()
+  if (value.includes('goal')) {
+    return 'goal'
+  }
+  if (value.includes('yellow')) {
+    return 'yellow'
+  }
+  if (value.includes('red')) {
+    return 'red'
+  }
+  if (value.includes('sub')) {
+    return 'sub'
+  }
+  return ''
+}
+
+function TeamLogo({
+  src,
+  alt,
+  className,
+  fallbackClassName,
+  size = 'tiny',
+}: {
+  src?: string | null
+  alt?: string | null
+  className?: string
+  fallbackClassName?: string
+  size?: 'tiny' | 'small' | 'medium' | 'large'
+}) {
+  const [failed, setFailed] = useState(false)
+
+  if (!src || failed) {
+    return <div className={fallbackClassName ?? 'mlogoFb'}>⚽</div>
   }
 
   return (
-    <div
-      className={`app-shell${safeScreen === 'player' ? ' player-shell' : ''}${isTvRuntime ? ' app-shell--tv' : ''}`}
-      style={{ ['--accent' as string]: selectedAccent }}
+    <img
+      src={buildImageUrl(src, size)}
+      alt={alt ?? ''}
+      className={className ?? 'mlogo'}
+      loading="lazy"
+      onError={() => setFailed(true)}
+    />
+  )
+}
+
+function Spinner({ label }: { label: string }) {
+  return (
+    <div className="loading">
+      <div className="spinner" />
+      <div className="ltext">{label}</div>
+    </div>
+  )
+}
+
+function ProgressBar({ value }: { value: number }) {
+  return (
+    <div className="pb">
+      <div className="pf" style={{ width: `${Math.min(100, Math.max(0, value))}%` }} />
+    </div>
+  )
+}
+
+function FormStrip({ form }: { form?: string | null }) {
+  return (
+    <div className="form-strip">
+      {(form ?? '').split('').map((result, index) => (
+        <span
+          key={`${result}-${index}`}
+          className={`fp ${result === 'W' ? 'fw' : result === 'D' ? 'fd2' : 'fl'}`}
+        >
+          {result}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function TopMeta({ children }: { children: ReactNode }) {
+  return <div className="top-meta">{children}</div>
+}
+
+function Clock() {
+  const [now, setNow] = useState(new Date())
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  const timezoneLabel =
+    new Intl.DateTimeFormat(undefined, { timeZoneName: 'short' })
+      .formatToParts(now)
+      .find((part) => part.type === 'timeZoneName')?.value ?? ''
+
+  return (
+    <TopMeta>
+      <div className="clk">
+        {new Intl.DateTimeFormat(undefined, {
+          hour: 'numeric',
+          minute: '2-digit',
+          second: '2-digit',
+        }).format(now)}
+      </div>
+      <span className="clock-zone">{timezoneLabel}</span>
+    </TopMeta>
+  )
+}
+
+function MatchCard({
+  match,
+  onClick,
+}: {
+  match: Match
+  onClick?: (match: Match) => void
+}) {
+  const live = isLiveMatch(match)
+  const finished = isFinishedMatch(match)
+  const homeScore = parseScore(match.intHomeScore)
+  const awayScore = parseScore(match.intAwayScore)
+
+  return (
+    <button
+      type="button"
+      className={`mc2 F${live ? ' live' : ''}`}
+      onClick={() => onClick?.(match)}
     >
-      <div className="app-ambient" aria-hidden="true">
-        <div className="app-orb orb-one" />
-        <div className="app-orb orb-two" />
+      <div className="mch">
+        <div className="mhead-copy">
+          <span className="mcomp">{match.strLeague ?? 'Football'}</span>
+          {match.strProvider ? <span className="mprovider">{match.strProvider}</span> : null}
+        </div>
+        {live ? (
+          <span className="bdg bdg-live">Live</span>
+        ) : finished ? (
+          <span className="bdg bdg-ft">FT</span>
+        ) : (
+          <span className="bdg bdg-up">{formatKickoff(match.strTime, match.dateEvent)}</span>
+        )}
       </div>
 
-      {safeScreen !== 'player' ? (
-        <header className="app-header">
-          <div className="brand-lockup">
-            <span className="brand-mark">
-              <BrandLogo className="brand-logo" />
-            </span>
-            <div className="brand-copy">
-              <span className="brand-subtitle">Private Source Sports</span>
-              <h1 className="brand-title">sportzx</h1>
+      <div className="mteams">
+        {[
+          ['home', match.strHomeTeam, match.strHomeTeamBadge, homeScore],
+          ['away', match.strAwayTeam, match.strAwayTeamBadge, awayScore],
+        ].map(([side, teamName, logo, score]) => (
+          <div key={side} className="mtr">
+            <TeamLogo src={logo} alt={teamName} className="mlogo" fallbackClassName="mlogoFb" />
+            <span className="mtn">{teamName ?? 'TBA'}</span>
+            {score !== null ? <span className="msc">{score}</span> : null}
+          </div>
+        ))}
+      </div>
+
+      {live ? (
+        <div>
+          <div className="mtime live">{match.strProgress ? `${match.strProgress}'` : 'Live'}</div>
+          <ProgressBar value={progressPercent(match.strProgress)} />
+        </div>
+      ) : (
+        <div className="mtime">
+          {finished ? 'Full Time' : formatKickoff(match.strTime, match.dateEvent)}
+        </div>
+      )}
+    </button>
+  )
+}
+
+function EmbedStreamFrame({ stream }: { stream: StreamOption }) {
+  const [embedLoaded, setEmbedLoaded] = useState(false)
+  const [embedError, setEmbedError] = useState('')
+
+  return (
+    <div className="stream-player-shell">
+      <div className="stream-player-note">
+        Embedded provider loaded inside the app. If playback stalls, try another source or use the fallback open link.
+      </div>
+      {embedError ? <div className="stream-player-error">{embedError}</div> : null}
+      <div className="stream-player-stage">
+        <iframe
+          className="stream-player-frame"
+          src={stream.url}
+          title={`${stream.provider} ${stream.label}`}
+          allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
+          allowFullScreen
+          loading="eager"
+          referrerPolicy="no-referrer"
+          sandbox="allow-forms allow-presentation allow-same-origin allow-scripts"
+          onLoad={() => {
+            setEmbedLoaded(true)
+            setEmbedError('')
+          }}
+          onError={() => {
+            setEmbedLoaded(false)
+            setEmbedError('This provider could not load inside the internal player.')
+          }}
+        />
+        {!embedLoaded && !embedError ? <div className="stream-player-loading">Loading provider…</div> : null}
+      </div>
+    </div>
+  )
+}
+
+function StreamPlayer({ stream }: { stream: StreamOption | null }) {
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video || !stream || stream.kind === 'embed') {
+      return undefined
+    }
+
+    video.pause()
+    video.removeAttribute('src')
+    video.load()
+
+    // Native playback is enough for the current direct stream types we expose here.
+    video.src = stream.url
+
+    return () => {
+      video.pause()
+      video.removeAttribute('src')
+      video.load()
+    }
+  }, [stream])
+
+  if (!stream) {
+    return (
+      <div className="stream-player-shell stream-player-placeholder">
+        <strong>No source selected</strong>
+        Pick a stream below to start playback.
+      </div>
+    )
+  }
+
+  if (stream.kind === 'embed') {
+    return <EmbedStreamFrame key={stream.id} stream={stream} />
+  }
+
+  return (
+    <div className="stream-player-shell">
+      <div className="stream-player-note">
+        Direct stream playback depends on browser codec support for this source.
+      </div>
+      <div className="stream-player-stage">
+        <video
+          key={stream.id}
+          ref={videoRef}
+          className="stream-player-video"
+          controls
+          playsInline
+          autoPlay
+          muted
+        />
+      </div>
+    </div>
+  )
+}
+
+function PlayerScreen({
+  payload,
+  onBack,
+}: {
+  payload: PlayerLaunchPayload | null
+  onBack: () => void
+}) {
+  useEffect(() => {
+    document.title = payload ? `${payload.matchTitle} | KICKOFF Player` : 'KICKOFF Player'
+    return () => {
+      document.title = 'KICKOFF'
+    }
+  }, [payload])
+
+  if (!payload) {
+    return (
+      <div className="player-screen">
+        <div className="player-screen-empty">
+          <strong>Player unavailable</strong>
+          This stream could not be started. Go back and launch it again from the stream list.
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="player-screen">
+      <button type="button" className="back-link player-back-link" onClick={onBack}>
+        <span className="back-arrow">←</span>
+        <span>Back To Streams</span>
+      </button>
+
+      <div className="player-topbar">
+        <div>
+          <div className="player-kicker">{payload.competition}</div>
+          <div className="player-title">{payload.matchTitle}</div>
+          <div className="player-subtitle">
+            {payload.venue} • {payload.kickoff}
+          </div>
+        </div>
+
+        <div className="player-actions">
+          <a className="player-link" href={payload.stream.url} target="_blank" rel="noreferrer">
+            Open Source
+          </a>
+          <button type="button" className="player-close" onClick={onBack}>
+            Exit Player
+          </button>
+        </div>
+      </div>
+
+      <div className="player-stage-wrap">
+        <StreamPlayer stream={payload.stream} />
+      </div>
+    </div>
+  )
+}
+
+function Sidebar({
+  screen,
+  expanded,
+  onNav,
+}: {
+  screen: ScreenId
+  expanded: boolean
+  onNav: (screen: NavItem['id']) => void
+}) {
+  return (
+    <aside className={`sb${expanded ? ' ex' : ''}`}>
+      <div className="logo">
+        <svg className="logo-icon" viewBox="0 0 36 36" fill="none" aria-hidden="true">
+          <circle cx="18" cy="18" r="16" stroke="#00e5ff" strokeWidth="2" />
+          <path
+            d="M18 5 L21 13 L29 13 L23 19 L25 27 L18 22 L11 27 L13 19 L7 13 L15 13 Z"
+            fill="rgba(0,229,255,0.18)"
+            stroke="#00e5ff"
+            strokeWidth="1.3"
+            strokeLinejoin="round"
+          />
+          <circle cx="18" cy="18" r="3.5" fill="#00e5ff" opacity="0.9" />
+        </svg>
+        {expanded ? (
+          <span>
+            KICK<span>OFF</span>
+          </span>
+        ) : null}
+      </div>
+
+      {NAV_ITEMS.map((item) => (
+        <button
+          key={item.id}
+          type="button"
+          className={`ni F${screen === item.id ? ' act' : ''}`}
+          onClick={() => onNav(item.id)}
+        >
+          <span className="nicon" aria-hidden="true">
+            {item.icon}
+          </span>
+          {expanded ? <span className="nlbl">{item.label}</span> : null}
+          {expanded && item.live ? <span className="ldot" /> : null}
+        </button>
+      ))}
+    </aside>
+  )
+}
+
+function DesktopTopbar({
+  screen,
+  onNav,
+}: {
+  screen: ScreenId
+  onNav: (screen: NavItem['id']) => void
+}) {
+  return (
+    <header className="desktop-topbar">
+      <div className="desktop-brand">
+        <div className="desktop-brand-mark">KO</div>
+        <div>
+          <div className="desktop-brand-title">KICKOFF Control</div>
+          <div className="desktop-brand-subtitle">Desktop Testing Shell</div>
+        </div>
+      </div>
+
+      <nav className="desktop-nav">
+        {NAV_ITEMS.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className={`desktop-nav-btn F${screen === item.id ? ' on' : ''}`}
+            onClick={() => onNav(item.id)}
+          >
+            <span>{item.icon}</span>
+            <span>{item.label}</span>
+          </button>
+        ))}
+      </nav>
+
+      <div className="desktop-actions">
+        <a className="desktop-mode-link" href="/">
+          TV Mode
+        </a>
+        <a className="desktop-mode-link desktop-mode-link-active" href="/desktop">
+          Desktop Mode
+        </a>
+        <Clock />
+      </div>
+    </header>
+  )
+}
+
+function ScreenHeader({
+  title,
+  subtitle,
+  right,
+}: {
+  title: string
+  subtitle: string
+  right?: ReactNode
+}) {
+  return (
+    <div className="sh">
+      <div>
+        <div className="st">{title}</div>
+        <div className="ss">{subtitle}</div>
+      </div>
+      {right}
+    </div>
+  )
+}
+
+function HomeScreen({ onMatch }: { onMatch: (match: Match) => void }) {
+  const { data, loading, error } = useApi(async () => {
+    const nextResponses = await Promise.allSettled(
+      LEAGUES.slice(0, 5).map((league) =>
+        apiFetch<{ events: Match[] | null }>(`eventsnextleague.php?id=${league.id}`),
+      ),
+    )
+    const recentResponse = await apiFetch<{ events: Match[] | null }>('eventspastleague.php?id=4328').catch(
+      () => ({ events: [] }),
+    )
+
+    const upcoming = nextResponses
+      .flatMap((response) =>
+        response.status === 'fulfilled' ? response.value.events ?? [] : [],
+      )
+      .sort((a, b) => matchTimeValue(a).localeCompare(matchTimeValue(b)))
+
+    return {
+      featured: upcoming[0] ?? null,
+      upcoming: upcoming.slice(0, 12),
+      recent: (recentResponse.events ?? []).slice(0, 8),
+    }
+  }, [])
+
+  return (
+    <div className="scr on">
+      <ScreenHeader
+        title="Matchday Control"
+        subtitle={formatHeaderDate()}
+        right={
+          <div className="header-right">
+            <div className="li">
+              <span className="ldot2" />
+              Live tracking
             </div>
+            <Clock />
           </div>
-          <div className="header-meta">
-            <span className={`status-chip status-chip--strong${isRefreshingCatalog ? ' is-pending' : ''}`}>
-              {isRefreshingCatalog ? 'Refreshing' : 'Live Board'}
-            </span>
-            <span className="status-chip">{currentScreenLabel}</span>
-            <span className="status-chip">{selectedSport?.name || 'All Sports'}</span>
-            <span className="status-chip">{nowLabel}</span>
+        }
+      />
+
+      <div className="sa">
+        {loading ? <Spinner label="Loading fixtures..." /> : null}
+        {error ? (
+          <div className="errmsg">
+            <strong>API Error</strong>
+            {error}
           </div>
-        </header>
-      ) : null}
+        ) : null}
 
-      {safeScreen === 'home' ? (
-        <main className="shell-layout">
-          <SportsColumn
-            sports={sports}
-            selectedSportId={selectedSport.id}
-            selectedIndex={selectedSportIndex}
-            isFocused={homeFocusArea === 'sports'}
-            liveCount={liveCount}
-            upcomingCount={upcomingCount}
-            endedCount={endedCount}
-            screenLabel={currentScreenLabel}
-            syncLabel={syncLabel}
-          />
-          <section className="home-stage">
-            <HeroSpotlight
-              match={selectedMatchView || selectedMatch}
-              accent={selectedAccent}
-              streamCount={selectedMatchStreams.length || selectedMatch.streamCountHint || 0}
-            />
-            <MatchList
-              matches={filteredMatches}
-              selectedIndex={selectedMatchIndex}
-              focused={homeFocusArea === 'matches'}
-              accentBySport={accentBySport}
-            />
+        {!loading && !error && data?.featured ? (
+          <button type="button" className="hero F" onClick={() => onMatch(data.featured!)}>
+            <div className="hbg" />
+            <div className="hpitch" />
+            <div className="hgl" />
+            <div className="hgl2" />
+            <div className="corner ctl" />
+            <div className="corner ctr" />
+            <div className="corner cbl" />
+            <div className="corner cbr" />
+
+            <div className="hc">
+              <div className="hteams">
+                <div className="hteam">
+                  <TeamLogo
+                    src={data.featured.strHomeTeamBadge}
+                    alt={data.featured.strHomeTeam}
+                    className="hcrest"
+                    fallbackClassName="hcrestFb"
+                    size="medium"
+                  />
+                  <div className="htn">{data.featured.strHomeTeam ?? 'Home'}</div>
+                </div>
+
+                <div className="hsblock">
+                  <div className="hscore">
+                    {parseScore(data.featured.intHomeScore) !== null
+                      ? `${parseScore(data.featured.intHomeScore)} - ${parseScore(data.featured.intAwayScore)}`
+                      : 'VS'}
+                  </div>
+                  <div className="hmin">
+                    {isLiveMatch(data.featured)
+                      ? `${data.featured.strProgress ?? 'LIVE'}'`
+                      : isFinishedMatch(data.featured)
+                        ? 'FULL TIME'
+                        : formatKickoff(data.featured.strTime, data.featured.dateEvent)}
+                  </div>
+                  <ProgressBar value={isLiveMatch(data.featured) ? progressPercent(data.featured.strProgress) : 50} />
+                </div>
+
+                <div className="hteam">
+                  <TeamLogo
+                    src={data.featured.strAwayTeamBadge}
+                    alt={data.featured.strAwayTeam}
+                    className="hcrest"
+                    fallbackClassName="hcrestFb"
+                    size="medium"
+                  />
+                  <div className="htn">{data.featured.strAwayTeam ?? 'Away'}</div>
+                </div>
+              </div>
+
+              <div className="hinfo">
+                <div className="hcomp">{data.featured.strLeague ?? 'Featured Match'}</div>
+                <div className="hven">Venue: {data.featured.strVenue ?? 'TBA'}</div>
+
+                <div className="hsmini">
+                  {[
+                    { value: data.featured.dateEvent ?? 'TBA', label: 'Date' },
+                    {
+                      value: formatKickoff(data.featured.strTime, data.featured.dateEvent),
+                      label: 'Kickoff',
+                    },
+                    { value: data.featured.strSeason ?? SEASON, label: 'Season' },
+                  ].map((stat) => (
+                    <div key={stat.label}>
+                      <div className="hsv">{stat.value}</div>
+                      <div className="hsl">{stat.label}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="hbtn">Open Match Center</div>
+              </div>
+            </div>
+          </button>
+        ) : null}
+
+        {!loading && data?.upcoming?.length ? (
+          <section className="rail">
+            <div className="rh">
+              <div className="rt">Upcoming Fixtures</div>
+              <span className="meta-note">{data.upcoming.length} matches queued</span>
+            </div>
+            <div className="g4">
+              {data.upcoming.map((match, index) => (
+                <MatchCard key={match.idEvent ?? `${match.strHomeTeam}-${index}`} match={match} onClick={onMatch} />
+              ))}
+            </div>
           </section>
-        </main>
-      ) : null}
+        ) : null}
 
-      {safeScreen === 'detail' ? (
-        <main className="shell-layout">
-          <SportsColumn
-            sports={sports}
-            selectedSportId={selectedSport.id}
-            selectedIndex={selectedSportIndex}
-            isFocused={false}
-            liveCount={liveCount}
-            upcomingCount={upcomingCount}
-            endedCount={endedCount}
-            screenLabel={currentScreenLabel}
-            syncLabel={syncLabel}
-          />
-          <section className="detail-stage">
-            <HeroSpotlight
-              match={selectedMatchView || selectedMatch}
-              accent={selectedAccent}
-              streamCount={selectedMatchStreams.length || selectedMatch.streamCountHint || 0}
-              mode="detail"
-              selectedStream={selectedStream}
-            />
-            <DetailPanel
-              match={selectedMatchView || selectedMatch}
-              streamIndex={selectedStreamIndex}
-              streamsFocused={detailFocusArea === 'streams'}
-              accent={selectedAccent}
-              isLoadingStreams={Boolean(loadingStreamMatchIds[selectedMatch.id])}
-              streamError={streamErrorsByMatchId[selectedMatch.id] || ''}
-              canRetry={canRetrySelectedMatchLookup}
-            />
+        {!loading && data?.recent?.length ? (
+          <section className="rail">
+            <div className="rh">
+              <div className="rt">Recent Results</div>
+            </div>
+            <div className="g4">
+              {data.recent.map((match, index) => (
+                <MatchCard key={match.idEvent ?? `${match.strHomeTeam}-${index}`} match={match} onClick={onMatch} />
+              ))}
+            </div>
           </section>
-        </main>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+function LiveScreen({ onMatch }: { onMatch: (match: Match) => void }) {
+  const [leagueId, setLeagueId] = useState(BASE_LIVE_FEEDS[0].id)
+  const [allMatches, setAllMatches] = useState<Match[]>([])
+  const [recentMatches, setRecentMatches] = useState<Match[]>([])
+  const [selectedDay, setSelectedDay] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const { data: sportzxSports } = useApi(
+    () =>
+      fetch('/api/sportzx/sports')
+        .then((response) =>
+          response.ok ? ((response.json() as Promise<{ sports?: SportzxSport[] }>)) : { sports: [] },
+        )
+        .then((payload) => (Array.isArray(payload.sports) ? payload.sports : []))
+        .catch(() => []),
+    [],
+  )
+
+  const liveFeeds = useMemo<LiveFeed[]>(
+    () => [
+      ...BASE_LIVE_FEEDS,
+      ...(sportzxSports ?? [])
+        .filter((sport) => !MERGED_SPORTZX_IDS.has(sport.id))
+        .map((sport) => ({
+          id: sport.id,
+          name: sport.name,
+          country: `${sport.count} matches`,
+          flag: sport.flag,
+          short: sport.short,
+          source: 'sportzx' as const,
+          sportzxIds: [sport.id],
+        })),
+    ],
+    [sportzxSports],
+  )
+
+  const selectedFeed = useMemo(
+    () => liveFeeds.find((feed) => feed.id === leagueId) ?? liveFeeds[0] ?? null,
+    [liveFeeds, leagueId],
+  )
+
+  useEffect(() => {
+    let alive = true
+
+    async function loadSportsDbLeagueMatches(sportsdbLeagueId: string) {
+      const baseResponse = await apiFetch<{ events: Match[] | null }>(
+        `eventsnextleague.php?id=${sportsdbLeagueId}`,
+      )
+      const baseMatches = baseResponse.events ?? []
+      const currentRound = Number.parseInt(baseMatches[0]?.['intRound' as keyof Match] as string, 10) || 1
+
+      const rounds = await Promise.all(
+        Array.from({ length: 6 }, (_, index) =>
+          apiFetch<{ events: Match[] | null }>(
+            `eventsround.php?id=${sportsdbLeagueId}&r=${currentRound + index}&s=${encodeURIComponent(SEASON)}`,
+          ).catch(() => ({ events: [] })),
+        ),
+      )
+
+      const unique = new Map<string, Match>()
+      for (const match of rounds.flatMap((response) => response.events ?? [])) {
+        if (match.idEvent) {
+          unique.set(match.idEvent, {
+            ...match,
+            streamSource: 'sportsdb' as const,
+            strProvider: 'TheSportsDB',
+          })
+        }
+      }
+
+      const merged = [...unique.values()].sort((a, b) => matchTimeValue(a).localeCompare(matchTimeValue(b)))
+      const visible = merged.filter((match) => !isFinishedMatch(match))
+      const recentResponse = await apiFetch<{ events: Match[] | null }>(
+        `eventspastleague.php?id=${sportsdbLeagueId}`,
+      )
+
+      return {
+        matches: visible.length ? visible : merged,
+        recent: (recentResponse.events ?? []).map((match) => ({
+          ...match,
+          streamSource: 'sportsdb' as const,
+          strProvider: 'TheSportsDB',
+        })),
+      }
+    }
+
+    async function loadSportzxMatches(sportIds: string[]) {
+      const responses = await Promise.all(
+        sportIds.map((sportId) =>
+          fetch(`/api/sportzx/matches?sportId=${encodeURIComponent(sportId)}`)
+            .then((response) =>
+              response.ok ? ((response.json() as Promise<{ matches?: Match[] }>)) : { matches: [] },
+            )
+            .catch(() => ({ matches: [] })),
+        ),
+      )
+
+      return responses.flatMap((payload) => (Array.isArray(payload.matches) ? payload.matches : []))
+    }
+
+    async function loadLeagueMatches() {
+      setLoading(true)
+      setError(null)
+      setAllMatches([])
+      setRecentMatches([])
+      setSelectedDay(null)
+
+      try {
+        if (!selectedFeed) {
+          if (!alive) {
+            return
+          }
+
+          setLoading(false)
+          return
+        }
+
+        if (selectedFeed.source === 'sportzx') {
+          const matches = await loadSportzxMatches(selectedFeed.sportzxIds ?? [])
+
+          if (!alive) {
+            return
+          }
+
+          setAllMatches(matches)
+          setRecentMatches([])
+          setSelectedDay(matches[0]?.dateEvent ?? null)
+          setLoading(false)
+          return
+        }
+
+        const sportsdbData = await loadSportsDbLeagueMatches(selectedFeed.sportsdbLeagueId ?? '')
+        const sportzxMatches =
+          selectedFeed.source === 'mixed'
+            ? await loadSportzxMatches(selectedFeed.sportzxIds ?? [])
+            : []
+        const mergedMatches = [...sportsdbData.matches, ...sportzxMatches].sort((a, b) =>
+          matchTimeValue(a).localeCompare(matchTimeValue(b)),
+        )
+
+        if (!alive) {
+          return
+        }
+
+        setAllMatches(mergedMatches)
+        setRecentMatches(sportsdbData.recent)
+        setSelectedDay(mergedMatches[0]?.dateEvent ?? sportsdbData.recent[0]?.dateEvent ?? null)
+        setLoading(false)
+      } catch (err) {
+        if (!alive) {
+          return
+        }
+        setError(err instanceof Error ? err.message : 'Unknown error')
+        setLoading(false)
+      }
+    }
+
+    void loadLeagueMatches()
+
+    return () => {
+      alive = false
+    }
+  }, [selectedFeed])
+
+  const days = useMemo(
+    () =>
+      [...new Set(allMatches.map((match) => match.dateEvent).filter(Boolean) as string[])].sort(),
+    [allMatches],
+  )
+
+  const matchesForSelectedDay = useMemo(
+    () => allMatches.filter((match) => match.dateEvent === selectedDay),
+    [allMatches, selectedDay],
+  )
+
+  return (
+    <div className="scr on">
+      <ScreenHeader
+        title="Fixtures & Results"
+        subtitle="Competition feeds from TheSportsDB and SportZX"
+        right={<Clock />}
+      />
+
+      <div className="tabs">
+        {liveFeeds.map((league) => (
+          <button
+            key={league.id}
+            type="button"
+            className={`tab F${leagueId === league.id ? ' on' : ''}`}
+            onClick={() => setLeagueId(league.id)}
+          >
+            {league.flag} {league.short}
+          </button>
+        ))}
+      </div>
+
+      {loading ? <Spinner label="Loading league schedule..." /> : null}
+      {error ? (
+        <div className="errmsg">
+          <strong>Error</strong>
+          {error}
+        </div>
       ) : null}
 
-      {safeScreen === 'player' && selectedStream && selectedMatchView ? (
-        <main className="player-layout">
-          <PlayerView match={selectedMatchView} stream={selectedStream} />
-        </main>
-      ) : null}
+      {!loading && !error ? (
+        <div className="sa">
+          {days.length ? (
+            <div className="day-strip">
+              {days.map((day) => (
+                <button
+                  key={day}
+                  type="button"
+                  className={`day-pill${day === selectedDay ? ' selected' : ''}`}
+                  onClick={() => setSelectedDay(day)}
+                >
+                  <div className="day-pill-title">{formatRelativeMatchDay(day)}</div>
+                  <div className="day-pill-count">
+                    {allMatches.filter((match) => match.dateEvent === day).length} matches
+                  </div>
+                </button>
+              ))}
+            </div>
+          ) : null}
 
-      {safeScreen !== 'player' ? (
-        <footer className="app-command-bar">
-          <span><strong>Arrows</strong> move through lanes</span>
-          <span><strong>Enter</strong> open selection</span>
-          <span><strong>Back</strong> return</span>
-          <span className="app-command-status">{syncLabel}</span>
-        </footer>
+          {matchesForSelectedDay.length ? (
+            <section className="rail">
+              <div className="rh">
+                <div className="rt">{formatRelativeMatchDay(selectedDay)} Fixtures</div>
+                <span className="meta-note">{matchesForSelectedDay.length} matches</span>
+              </div>
+              <div className="g4">
+                {matchesForSelectedDay.map((match, index) => (
+                  <MatchCard key={match.idEvent ?? `${match.strHomeTeam}-${index}`} match={match} onClick={onMatch} />
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          {recentMatches.length ? (
+            <section className="rail">
+              <div className="rh">
+                <div className="rt">Recent Results</div>
+                <span className="meta-note">{recentMatches.length} matches</span>
+              </div>
+              <div className="g4">
+                {recentMatches.map((match, index) => (
+                  <MatchCard key={match.idEvent ?? `${match.strHomeTeam}-${index}`} match={match} onClick={onMatch} />
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          {!days.length && !recentMatches.length ? (
+            <div className="errmsg">
+              <strong>No matches</strong>
+              Try another competition.
+            </div>
+          ) : null}
+        </div>
       ) : null}
     </div>
-  );
+  )
 }
+
+function MatchDetailScreen({
+  match,
+  onBack,
+  onPlayStream,
+}: {
+  match: Match
+  onBack: () => void
+  onPlayStream: (payload: PlayerLaunchPayload) => void
+}) {
+  const [tab, setTab] = useState<'streams' | 'timeline' | 'stats' | 'lineups'>('streams')
+  const [streamRefreshKey, setStreamRefreshKey] = useState(0)
+  const [selectedProvider, setSelectedProvider] = useState('all')
+  const sportsDbEventId = match.streamSource === 'sportzx' ? '' : match.idEvent ?? ''
+  const { data: eventData } = useApi(
+    () =>
+      sportsDbEventId
+        ? apiFetch<{ events: Match[] | null }>(`lookupevent.php?id=${sportsDbEventId}`).then(
+            (response) => response.events?.[0] ?? match,
+          )
+        : Promise.resolve(match),
+    [sportsDbEventId, match],
+  )
+  const { data: timeline } = useApi(
+    () =>
+      sportsDbEventId
+        ? apiFetch<{ timeline: TimelineEvent[] | null }>(`lookupeventtimeline.php?id=${sportsDbEventId}`).then(
+            (response) => response.timeline ?? [],
+          )
+        : Promise.resolve([]),
+    [sportsDbEventId],
+  )
+  const { data: stats } = useApi(
+    () =>
+      sportsDbEventId
+        ? apiFetch<{ eventstats: EventStat[] | null }>(`lookupeventstats.php?id=${sportsDbEventId}`).then(
+            (response) => response.eventstats ?? [],
+          )
+        : Promise.resolve([]),
+    [sportsDbEventId],
+  )
+  const { data: lineup } = useApi(
+    () =>
+      sportsDbEventId
+        ? apiFetch<{ lineup: LineupPlayer[] | null }>(`lookupeventlineup.php?id=${sportsDbEventId}`).then(
+            (response) => response.lineup ?? [],
+          )
+        : Promise.resolve([]),
+    [sportsDbEventId],
+  )
+  const {
+    data: streamData,
+    loading: streamsLoading,
+    error: streamsError,
+  } = useApi(
+    async () => {
+      const lookupQuery = match.streamLookupId
+        ? `matchId=${encodeURIComponent(match.streamLookupId)}`
+        : `idEvent=${encodeURIComponent(match.idEvent ?? '')}`
+      const response = await fetch(`/api/streams?${lookupQuery}`)
+      const text = await response.text()
+      const payload = text ? (JSON.parse(text) as MatchStreams | { error?: string }) : { streams: [] }
+
+      if (!response.ok) {
+        throw new Error('error' in payload && payload.error ? payload.error : `HTTP ${response.status}`)
+      }
+
+      return 'streams' in payload ? payload : { streams: [] }
+    },
+    [match.idEvent, match.streamLookupId, streamRefreshKey],
+  )
+
+  const selectedMatch = eventData ?? match
+  const providerOptions = useMemo(() => {
+    const streamEntries = Array.isArray(streamData?.streams) ? streamData.streams : []
+    return [...new Set(streamEntries.map((stream) => formatProviderLabel(stream.provider)))].sort()
+  }, [streamData])
+  const activeProvider = providerOptions.includes(selectedProvider) ? selectedProvider : 'all'
+  const visibleStreams = useMemo(() => {
+    const streamEntries = Array.isArray(streamData?.streams) ? streamData.streams : []
+    if (activeProvider === 'all') {
+      return streamEntries
+    }
+
+    return streamEntries.filter((stream) => formatProviderLabel(stream.provider) === activeProvider)
+  }, [activeProvider, streamData])
+
+  useEffect(() => {
+    if (!streamData?.pending) {
+      return undefined
+    }
+
+    const timer = window.setTimeout(() => setStreamRefreshKey((current) => current + 1), 2500)
+    return () => window.clearTimeout(timer)
+  }, [streamData?.pending, streamData?.streams?.length])
+
+  function launchStreamPlayer(stream: StreamOption) {
+    onPlayStream(createPlayerLaunchPayload(selectedMatch, stream))
+  }
+
+  return (
+    <div className="scr on">
+      <button type="button" className="back-link" onClick={onBack}>
+        <span className="back-arrow">←</span>
+        <span>Back</span>
+      </button>
+
+      <div className="dheader">
+        <div className="detail-meta">
+          <span className="detail-league">{selectedMatch.strLeague ?? 'Match Center'}</span>
+          <span className={`bdg ${isFinishedMatch(selectedMatch) ? 'bdg-ft' : 'bdg-up'}`}>
+            {isFinishedMatch(selectedMatch)
+              ? 'Full Time'
+              : formatKickoff(selectedMatch.strTime, selectedMatch.dateEvent)}
+          </span>
+        </div>
+
+        <div className="dscoreline">
+          <div className="dteam">
+            <TeamLogo
+              src={selectedMatch.strHomeTeamBadge}
+              alt={selectedMatch.strHomeTeam}
+              className="dcrest"
+              fallbackClassName="dcrestFb"
+              size="medium"
+            />
+            <div className="dtn">{selectedMatch.strHomeTeam ?? 'Home'}</div>
+          </div>
+
+          <div className="dscore">
+            {parseScore(selectedMatch.intHomeScore) !== null
+              ? `${parseScore(selectedMatch.intHomeScore)} - ${parseScore(selectedMatch.intAwayScore)}`
+              : 'VS'}
+          </div>
+
+          <div className="dteam">
+            <TeamLogo
+              src={selectedMatch.strAwayTeamBadge}
+              alt={selectedMatch.strAwayTeam}
+              className="dcrest"
+              fallbackClassName="dcrestFb"
+              size="medium"
+            />
+            <div className="dtn">{selectedMatch.strAwayTeam ?? 'Away'}</div>
+          </div>
+        </div>
+
+        <div className="detail-submeta">
+          Venue: {selectedMatch.strVenue ?? 'TBA'} • {selectedMatch.dateEvent ?? 'Date pending'}
+        </div>
+      </div>
+
+      <div className="tabs">
+        {(['streams', 'timeline', 'stats', 'lineups'] as const).map((value) => (
+          <button
+            key={value}
+            type="button"
+            className={`tab F${tab === value ? ' on' : ''}`}
+            onClick={() => setTab(value)}
+          >
+            {value}
+          </button>
+        ))}
+      </div>
+
+      <div className="sa">
+        {tab === 'streams' ? (
+          streamsLoading ? (
+            <Spinner label="Loading stream sources" />
+          ) : streamData?.streams?.length || streamData?.message ? (
+            <div className="stream-panel">
+              <div className="stream-note">{streamData?.message || 'Authorized sources from the backend.'}</div>
+
+              {streamData.streams?.length ? (
+                <>
+                  {providerOptions.length > 1 ? (
+                    <div className="stream-provider-strip">
+                      <button
+                        type="button"
+                        className={`stream-provider-chip F${activeProvider === 'all' ? ' on' : ''}`}
+                        onClick={() => setSelectedProvider('all')}
+                      >
+                        All Sources
+                      </button>
+                      {providerOptions.map((provider) => (
+                        <button
+                          key={provider}
+                          type="button"
+                          className={`stream-provider-chip F${activeProvider === provider ? ' on' : ''}`}
+                          onClick={() => setSelectedProvider(provider)}
+                        >
+                          {provider}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  <div className="stream-picker-copy">
+                    {streamData.pending
+                      ? 'Sources are resolving in the background. Ready providers will appear here automatically.'
+                      : 'Select a source below to launch it in the player screen.'}
+                  </div>
+                  <div className="stream-grid">
+                    {visibleStreams.map((stream) => {
+                      const waitingOnlyFallback =
+                        Boolean(streamData.pending) &&
+                        streamData.streams.length === 1 &&
+                        stream.label === 'Match Page'
+
+                      return (
+                      <button
+                        key={stream.id}
+                        type="button"
+                        className={`stream-card F${waitingOnlyFallback ? ' stream-card-disabled' : ''}`}
+                        onClick={() => {
+                          if (!waitingOnlyFallback) {
+                            launchStreamPlayer(stream)
+                          }
+                        }}
+                        disabled={waitingOnlyFallback}
+                      >
+                        <div className="stream-head">
+                          <div className={`stream-logo-fallback stream-logo-${stream.kind}`}>
+                            {buildStreamBadge(stream.provider)}
+                          </div>
+                          <div className="stream-copy">
+                            <div className="stream-title">{formatProviderLabel(stream.provider)}</div>
+                            <div className="stream-meta">{formatSourceHost(stream.url || stream.provider)}</div>
+                          </div>
+                          <div className="stream-kind-chip">
+                            {stream.kind.toUpperCase()}
+                          </div>
+                        </div>
+
+                        <div className="stream-pills">
+                          <span className="stream-pill">{stream.quality}</span>
+                          <span className="stream-pill">{stream.language}</span>
+                          {waitingOnlyFallback ? (
+                            <span className="stream-pill stream-pill-pending">Resolving</span>
+                          ) : stream.authorized ? (
+                            <span className="stream-pill stream-pill-live">Ready</span>
+                          ) : null}
+                        </div>
+
+                        <div className="stream-foot">
+                          <span className="stream-source">{formatSourceHost(stream.url || stream.provider)}</span>
+                          <a
+                            className="stream-time stream-open"
+                            href={stream.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            Open Link
+                          </a>
+                        </div>
+
+                        {stream.notes ? <div className="stream-extra">{stream.notes}</div> : null}
+                      </button>
+                    )})}
+                  </div>
+                  {!visibleStreams.length ? (
+                    <div className="errmsg">
+                      <strong>No sources in this provider</strong>
+                      Pick a different provider filter to view the other streams.
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+          ) : (
+            <div className="errmsg">
+              <strong>{streamsError ? 'Streams unavailable' : 'No streams found'}</strong>
+              {streamsError
+                ? streamsError
+                : 'No backend stream sources were found for this fixture yet.'}
+            </div>
+          )
+        ) : null}
+
+        {tab === 'timeline' ? (
+          timeline?.length ? (
+            <div className="tline">
+              <div className="tlineL" />
+              {timeline.map((entry, index) => {
+                const homeSide = entry.strTeam === selectedMatch.strHomeTeam
+                return (
+                  <div key={`${entry.strPlayer}-${index}`} className={`tevt ${homeSide ? 'home' : 'away'}`}>
+                    <div className="tevtInner">
+                      <div className="tevtInfo">
+                        <div className="tevtPlayer">{entry.strPlayer ?? entry.strAssist ?? 'Unknown'}</div>
+                        <div className="tevtDesc">{entry.strType ?? 'Event'}</div>
+                      </div>
+                      <div className={`tevtIcon ${eventClass(entry.strType)}`}>{eventIcon(entry.strType)}</div>
+                      <div className="tevtTime">
+                        {entry.strTimeElapsed ? `${entry.strTimeElapsed}'` : ''}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <div className="errmsg">
+              <strong>No timeline</strong>
+              Match events are not available yet.
+            </div>
+          )
+        ) : null}
+
+        {tab === 'stats' ? (
+          stats?.length ? (
+            <div className="stats-panel">
+              <div className="stats-head">
+                <span>{selectedMatch.strHomeTeam ?? 'Home'}</span>
+                <span>{selectedMatch.strAwayTeam ?? 'Away'}</span>
+              </div>
+
+              {stats.map((stat, index) => {
+                const home = Number.parseFloat(stat.intHome ?? '0') || 0
+                const away = Number.parseFloat(stat.intAway ?? '0') || 0
+                const total = home + away || 1
+
+                return (
+                  <div key={`${stat.strStat}-${index}`} className="sbrow">
+                    <div className="sbv">{stat.intHome ?? '0'}</div>
+                    <div className="stat-center">
+                      <div className="sblbl">{stat.strStat ?? 'Metric'}</div>
+                      <div className="stat-bars">
+                        <div className="sbtrack" style={{ flex: home / total }}>
+                          <div className="sbfill sbfill-home" />
+                        </div>
+                        <div className="sbtrack" style={{ flex: away / total }}>
+                          <div className="sbfill sbfill-away" />
+                        </div>
+                      </div>
+                    </div>
+                    <div className="sbv align-right">{stat.intAway ?? '0'}</div>
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <div className="errmsg">
+              <strong>No stats</strong>
+              Match statistics are not available for this fixture.
+            </div>
+          )
+        ) : null}
+
+        {tab === 'lineups' ? (
+          <div className="g2">
+            {[
+              [selectedMatch.strHomeTeam, selectedMatch.strHomeTeamBadge],
+              [selectedMatch.strAwayTeam, selectedMatch.strAwayTeamBadge],
+            ].map(([teamName, badge]) => {
+              const players = (lineup ?? []).filter((player) => player.strTeam === teamName)
+              return (
+                <div key={teamName ?? 'team'}>
+                  <div className="lineup-head">
+                    <TeamLogo src={badge} alt={teamName} className="mlogo" fallbackClassName="mlogoFb" />
+                    <div className="lineup-title">{teamName ?? 'Team'}</div>
+                  </div>
+
+                  {players.length ? (
+                    players.map((player, index) => (
+                      <div key={`${player.strPlayer}-${index}`} className="prow">
+                        <span className="pnum">{player.intNumber ?? index + 1}</span>
+                        <span className="pname">{player.strPlayer ?? 'Unknown Player'}</span>
+                        <span className={`ppos ${player.strPosition ?? ''}`}>
+                          {player.strPosition ?? 'N/A'}
+                        </span>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="errmsg">Lineup not available.</div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+function CompetitionsScreen({ onMatch }: { onMatch: (match: Match) => void }) {
+  const [selectedLeague, setSelectedLeague] = useState(LEAGUES[0])
+
+  const { data: table, loading, error } = useApi(
+    async () => {
+      const response = await fetch('/api/standings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          leagueId: selectedLeague.id,
+          league: selectedLeague.name,
+          season: SEASON,
+        }),
+      })
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { error?: string } | null
+        throw new Error(payload?.error ?? `HTTP ${response.status}`)
+      }
+
+      return (await response.json()) as StandingRow[]
+    },
+    [selectedLeague.id, selectedLeague.name],
+  )
+
+  const { data: upcoming } = useApi(
+    () =>
+      apiFetch<{ events: Match[] | null }>(`eventsnextleague.php?id=${selectedLeague.id}`).then(
+        (response) => (response.events ?? []).slice(0, 6),
+      ),
+    [selectedLeague.id],
+  )
+
+  const { data: recent } = useApi(
+    () =>
+      apiFetch<{ events: Match[] | null }>(`eventspastleague.php?id=${selectedLeague.id}`).then(
+        (response) => (response.events ?? []).slice(0, 6),
+      ),
+    [selectedLeague.id],
+  )
+
+  return (
+    <div className="scr on">
+      <ScreenHeader title="Competitions" subtitle={`Standings and fixtures for ${SEASON}`} />
+
+      <div className="comp-layout">
+        <div className="sa">
+          {LEAGUES.map((league) => (
+            <button
+              key={league.id}
+              type="button"
+              className={`compH F${selectedLeague.id === league.id ? ' on' : ''}`}
+              onClick={() => setSelectedLeague(league)}
+            >
+              <span className="chFlag">{league.flag}</span>
+              <span>
+                <span className="chName">{league.name}</span>
+                <span className="chSub">{league.country}</span>
+              </span>
+              {selectedLeague.id === league.id ? <span className="comp-arrow">→</span> : null}
+            </button>
+          ))}
+        </div>
+
+        <div className="sa">
+          <div className="competition-title">
+            {selectedLeague.flag} {selectedLeague.name}
+          </div>
+
+          {loading ? <Spinner label="Loading standings..." /> : null}
+          {error ? (
+            <div className="errmsg">
+              <strong>Error</strong>
+              {error}
+            </div>
+          ) : null}
+
+          {!loading && !error && table?.length ? (
+            <table className="stbl">
+              <thead>
+                <tr>
+                  {['#', 'Club', 'P', 'W', 'D', 'L', 'GF', 'GA', 'GD', 'Pts', 'Form'].map((heading) => (
+                    <th key={heading}>{heading}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {table.map((row, index) => (
+                  <tr key={row.idTeam ?? `${row.strTeam}-${index}`} className="F">
+                    <td>
+                      <span className={`spos ${positionClass(index, table.length)}`}>{index + 1}</span>
+                    </td>
+                    <td>
+                      <div className="stc">
+                        <TeamLogo
+                          src={row.strBadge}
+                          alt={row.strTeam}
+                          className="slogo"
+                          fallbackClassName="slogoFb"
+                        />
+                        <span className="stn">{row.strTeam ?? 'Unknown Club'}</span>
+                      </div>
+                    </td>
+                    {[
+                      row.intPlayed,
+                      row.intWin,
+                      row.intDraw,
+                      row.intLoss,
+                      row.intGoalsFor,
+                      row.intGoalsAgainst,
+                      row.intGoalDifference ??
+                        String(
+                          (Number.parseInt(row.intGoalsFor ?? '0', 10) || 0) -
+                            (Number.parseInt(row.intGoalsAgainst ?? '0', 10) || 0),
+                        ),
+                    ].map((value, columnIndex) => (
+                      <td key={`${row.idTeam}-${columnIndex}`} className="align-center">
+                        {value ?? '—'}
+                      </td>
+                    ))}
+                    <td className="align-center">
+                      <span className="spts">{row.intPoints ?? '0'}</span>
+                    </td>
+                    <td>
+                      <FormStrip form={row.strForm} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : null}
+
+          {!loading && !error && !table?.length ? (
+            <div className="errmsg">
+              <strong>No standings</strong>
+              Standings are not available for this competition.
+            </div>
+          ) : null}
+
+          {upcoming?.length ? (
+            <section className="rail">
+              <div className="rh">
+                <div className="rt">Upcoming Fixtures</div>
+              </div>
+              <div className="g3">
+                {upcoming.map((match, index) => (
+                  <MatchCard key={match.idEvent ?? `${match.strHomeTeam}-${index}`} match={match} onClick={onMatch} />
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          {recent?.length ? (
+            <section className="rail">
+              <div className="rh">
+                <div className="rt">Recent Results</div>
+              </div>
+              <div className="g3">
+                {recent.map((match, index) => (
+                  <MatchCard key={match.idEvent ?? `${match.strHomeTeam}-${index}`} match={match} onClick={onMatch} />
+                ))}
+              </div>
+            </section>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function TeamsScreen({ onMatch }: { onMatch: (match: Match) => void }) {
+  const [leagueId, setLeagueId] = useState(LEAGUES[0].id)
+  const [selectedTeam, setSelectedTeam] = useState<Team | null>(null)
+
+  const { data: teams, loading, error } = useApi(
+    () =>
+      apiFetch<{ teams: Team[] | null }>(`lookup_all_teams.php?id=${leagueId}`).then((response) =>
+        (response.teams ?? []).sort((a, b) => (a.strTeam ?? '').localeCompare(b.strTeam ?? '')),
+      ),
+    [leagueId],
+  )
+
+  const { data: nextFixtures } = useApi(
+    () =>
+      selectedTeam?.idTeam
+        ? apiFetch<{ events: Match[] | null }>(`eventsnext.php?id=${selectedTeam.idTeam}`).then(
+            (response) => (response.events ?? []).slice(0, 3),
+          )
+        : Promise.resolve([]),
+    [selectedTeam?.idTeam],
+  )
+
+  const { data: recentFixtures } = useApi(
+    () =>
+      selectedTeam?.idTeam
+        ? apiFetch<{ results: Match[] | null }>(`eventslast.php?id=${selectedTeam.idTeam}`).then(
+            (response) => (response.results ?? []).slice(0, 3),
+          )
+        : Promise.resolve([]),
+    [selectedTeam?.idTeam],
+  )
+
+  return (
+    <div className="scr on">
+      <ScreenHeader title="Teams" subtitle={`${teams?.length ?? '...'} clubs tracked`} />
+
+      <div className="tabs">
+        {LEAGUES.slice(0, 5).map((league) => (
+          <button
+            key={league.id}
+            type="button"
+            className={`tab F${leagueId === league.id ? ' on' : ''}`}
+            onClick={() => {
+              setLeagueId(league.id)
+              setSelectedTeam(null)
+            }}
+          >
+            {league.flag} {league.short}
+          </button>
+        ))}
+      </div>
+
+      {loading ? <Spinner label="Loading clubs..." /> : null}
+      {error ? (
+        <div className="errmsg">
+          <strong>Error</strong>
+          {error}
+        </div>
+      ) : null}
+
+      {!loading && !error ? (
+        selectedTeam ? (
+          <div>
+            <button type="button" className="back-link" onClick={() => setSelectedTeam(null)}>
+              <span className="back-arrow">←</span>
+              <span>All Teams</span>
+            </button>
+
+            <div className="team-detail">
+              {selectedTeam.strBadge ? (
+                <img
+                  src={buildImageUrl(selectedTeam.strBadge, 'medium')}
+                  alt={selectedTeam.strTeam ?? ''}
+                  className="team-detail-badge"
+                />
+              ) : (
+                <div className="team-detail-badge fallback">⚽</div>
+              )}
+
+              <div className="team-detail-copy">
+                <div className="team-detail-name">{selectedTeam.strTeam ?? 'Club'}</div>
+                <div className="team-detail-league">{selectedTeam.strLeague ?? 'League'}</div>
+
+                <div className="team-metrics">
+                  {[
+                    { value: selectedTeam.intFormedYear ?? '—', label: 'Founded' },
+                    { value: selectedTeam.strStadium ?? '—', label: 'Stadium' },
+                    {
+                      value: selectedTeam.intStadiumCapacity
+                        ? Number(selectedTeam.intStadiumCapacity).toLocaleString()
+                        : '—',
+                      label: 'Capacity',
+                    },
+                    { value: selectedTeam.strCountry ?? '—', label: 'Country' },
+                  ].map((metric) => (
+                    <div key={metric.label} className="metric">
+                      <div className="metric-value">{metric.value}</div>
+                      <div className="ml">{metric.label}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {selectedTeam.strDescriptionEN ? (
+                  <div className="team-detail-description">
+                    {selectedTeam.strDescriptionEN.slice(0, 320)}...
+                  </div>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="g2">
+              <section className="rail">
+                <div className="rh">
+                  <div className="rt">Next Fixtures</div>
+                </div>
+                <div className="stack-cards">
+                  {(nextFixtures ?? []).map((match, index) => (
+                    <MatchCard key={match.idEvent ?? `${match.strHomeTeam}-${index}`} match={match} onClick={onMatch} />
+                  ))}
+                </div>
+              </section>
+
+              <section className="rail">
+                <div className="rh">
+                  <div className="rt">Recent Results</div>
+                </div>
+                <div className="stack-cards">
+                  {(recentFixtures ?? []).map((match, index) => (
+                    <MatchCard key={match.idEvent ?? `${match.strHomeTeam}-${index}`} match={match} onClick={onMatch} />
+                  ))}
+                </div>
+              </section>
+            </div>
+          </div>
+        ) : (
+          <div className="sa">
+            <div className="g5">
+              {(teams ?? []).map((team, index) => (
+                <button
+                  key={team.idTeam ?? `${team.strTeam}-${index}`}
+                  type="button"
+                  className="tc F"
+                  onClick={() => setSelectedTeam(team)}
+                >
+                  <TeamLogo
+                    src={team.strBadge}
+                    alt={team.strTeam}
+                    className="tclogo"
+                    fallbackClassName="tclogoFb"
+                    size="small"
+                  />
+                  <div className="tcname">{team.strTeam ?? 'Club'}</div>
+                  <div className="tcleague">{team.strLeague ?? ''}</div>
+                  {team.intFormedYear ? <div className="est-label">Est. {team.intFormedYear}</div> : null}
+                </button>
+              ))}
+            </div>
+          </div>
+        )
+      ) : null}
+    </div>
+  )
+}
+
+function SearchScreen({ onMatch }: { onMatch: (match: Match) => void }) {
+  const [query, setQuery] = useState('')
+  const [submitted, setSubmitted] = useState('')
+
+  const { data: teamResults, loading: loadingTeams } = useApi(
+    () =>
+      submitted
+        ? apiFetch<{ teams: Team[] | null }>(`searchteams.php?t=${encodeURIComponent(submitted)}`).then(
+            (response) => response.teams ?? [],
+          )
+        : Promise.resolve([]),
+    [submitted],
+  )
+
+  const { data: eventResults, loading: loadingEvents } = useApi(
+    () =>
+      submitted
+        ? apiFetch<{ event: Match[] | null }>(`searchevents.php?e=${encodeURIComponent(submitted)}`).then(
+            (response) => (response.event ?? []).slice(0, 6),
+          )
+        : Promise.resolve([]),
+    [submitted],
+  )
+
+  const loading = loadingTeams || loadingEvents
+
+  function submitSearch(value = query) {
+    const trimmed = value.trim()
+    if (trimmed) {
+      setSubmitted(trimmed)
+      setQuery(trimmed)
+    }
+  }
+
+  return (
+    <div className="scr on">
+      <ScreenHeader title="Search" subtitle="Teams, matches and live events" />
+
+      <div className="search-wrap">
+        <input
+          className="sinput F"
+          type="text"
+          placeholder="Search teams, events, matches..."
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              submitSearch()
+            }
+          }}
+        />
+        <button type="button" className="search-button" onClick={() => submitSearch()}>
+          ⌕
+        </button>
+      </div>
+
+      {!submitted ? (
+        <div>
+          <div className="quick-title">Quick Search</div>
+          <div className="quick-list">
+            {['Arsenal', 'Manchester City', 'Real Madrid', 'Barcelona', 'Bayern Munich', 'PSG', 'Liverpool', 'Chelsea'].map((tag) => (
+              <button key={tag} type="button" className="tab F" onClick={() => submitSearch(tag)}>
+                {tag}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {submitted && loading ? <Spinner label={`Searching "${submitted}"...`} /> : null}
+
+      {submitted && !loading ? (
+        <div className="sa">
+          {!teamResults?.length && !eventResults?.length ? (
+            <div className="errmsg">
+              <strong>No results</strong>
+              Nothing matched "{submitted}".
+            </div>
+          ) : null}
+
+          {teamResults?.length ? (
+            <section className="rail">
+              <div className="rh">
+                <div className="rt">Teams</div>
+                <span className="meta-note">{teamResults.length} found</span>
+              </div>
+              <div className="g5">
+                {teamResults.slice(0, 10).map((team, index) => (
+                  <div key={team.idTeam ?? `${team.strTeam}-${index}`} className="tc">
+                    <TeamLogo
+                      src={team.strBadge}
+                      alt={team.strTeam}
+                      className="tclogo"
+                      fallbackClassName="tclogoFb"
+                      size="small"
+                    />
+                    <div className="tcname">{team.strTeam ?? 'Club'}</div>
+                    <div className="tcleague">{team.strLeague ?? ''}</div>
+                    {team.intFormedYear ? <div className="est-label">Est. {team.intFormedYear}</div> : null}
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          {eventResults?.length ? (
+            <section className="rail">
+              <div className="rh">
+                <div className="rt">Matches</div>
+              </div>
+              <div className="g3">
+                {eventResults.map((match, index) => (
+                  <MatchCard key={match.idEvent ?? `${match.strHomeTeam}-${index}`} match={match} onClick={onMatch} />
+                ))}
+              </div>
+            </section>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function SettingsScreen() {
+  const [config, setConfig] = useState({
+    notifications: true,
+    liveAlerts: true,
+    autoRefresh: true,
+    darkMode: true,
+    audioCommentary: false,
+  })
+
+  function toggle(key: keyof typeof config) {
+    setConfig((current) => ({ ...current, [key]: !current[key] }))
+  }
+
+  return (
+    <div className="scr on">
+      <ScreenHeader title="Settings" subtitle="Customize the matchday experience" />
+
+      <div className="g2 settings-grid">
+        <div>
+          <div className="settings-label">Notifications</div>
+          {[
+            { key: 'notifications', label: 'Push Notifications' },
+            { key: 'liveAlerts', label: 'Live Match Alerts' },
+            { key: 'audioCommentary', label: 'Audio Commentary' },
+          ].map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              className="sitem F"
+              onClick={() => toggle(item.key as keyof typeof config)}
+            >
+              <span className="silbl">{item.label}</span>
+              <span className={`tog ${config[item.key as keyof typeof config] ? 'on' : ''}`} />
+            </button>
+          ))}
+
+          <div className="settings-label">Display</div>
+          {[
+            { key: 'darkMode', label: 'Dark Mode' },
+            { key: 'autoRefresh', label: 'Auto Refresh Scores' },
+          ].map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              className="sitem F"
+              onClick={() => toggle(item.key as keyof typeof config)}
+            >
+              <span className="silbl">{item.label}</span>
+              <span className={`tog ${config[item.key as keyof typeof config] ? 'on' : ''}`} />
+            </button>
+          ))}
+        </div>
+
+        <div>
+          <div className="settings-label">Data Source</div>
+          {[
+            ['API Provider', 'TheSportsDB'],
+            ['Season', SEASON],
+            ['Coverage', `${LEAGUES.length} competitions`],
+            ['Navigation', 'TV-first layout'],
+            ['Frontend', 'React + Vite'],
+          ].map(([label, value]) => (
+            <div key={label} className="sitem">
+              <span className="silbl">{label}</span>
+              <span className="sival">{value}</span>
+            </div>
+          ))}
+
+          <button type="button" className="sitem F reset-item">
+            <span className="silbl reset-text">Clear Cache & Restart</span>
+            <span className="reset-icon">↺</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function App() {
+  const uiMode: UIMode = window.location.pathname.startsWith('/desktop') ? 'desktop' : 'tv'
+  const [screen, setScreen] = useState<ScreenId>('home')
+  const [sidebarExpanded, setSidebarExpanded] = useState(false)
+  const [selectedMatch, setSelectedMatch] = useState<Match | null>(null)
+  const [playerPayload, setPlayerPayload] = useState<PlayerLaunchPayload | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
+
+  useEffect(() => {
+    document.body.classList.toggle('desktop-mode', uiMode === 'desktop')
+
+    return () => {
+      document.body.classList.remove('desktop-mode')
+    }
+  }, [uiMode])
+
+  useEffect(() => {
+    if (!toast) {
+      return undefined
+    }
+    const timer = window.setTimeout(() => setToast(null), 2800)
+    return () => window.clearTimeout(timer)
+  }, [toast])
+
+  function navigate(nextScreen: NavItem['id']) {
+    setScreen(nextScreen)
+    setSelectedMatch(null)
+    setPlayerPayload(null)
+    setSidebarExpanded(false)
+    const navItem = NAV_ITEMS.find((item) => item.id === nextScreen)
+    setToast(navItem?.label ?? nextScreen)
+  }
+
+  function openMatch(match: Match) {
+    setSelectedMatch(match)
+    setScreen('detail')
+  }
+
+  function openPlayer(payload: PlayerLaunchPayload) {
+    setPlayerPayload(payload)
+    setScreen('player')
+  }
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null
+      if (target?.tagName === 'INPUT') {
+        return
+      }
+
+      if (event.key === 'Escape' || event.key === 'Backspace') {
+        if (screen === 'player') {
+          setScreen('detail')
+        } else if (screen === 'detail') {
+          setScreen('live')
+          setSelectedMatch(null)
+        } else if (sidebarExpanded) {
+          setSidebarExpanded(false)
+        }
+        return
+      }
+
+      if (event.key === 'ArrowLeft') {
+        setSidebarExpanded(true)
+        return
+      }
+
+      if (event.key === 'ArrowRight') {
+        setSidebarExpanded(false)
+        return
+      }
+
+      if (event.key >= '1' && event.key <= String(NAV_ITEMS.length)) {
+        const navItem = NAV_ITEMS[Number(event.key) - 1]
+        if (navItem) {
+          navigate(navItem.id)
+        }
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [screen, sidebarExpanded])
+
+  const appContent =
+    screen === 'player' ? (
+      <PlayerScreen payload={playerPayload} onBack={() => setScreen('detail')} />
+    ) : screen === 'detail' && selectedMatch ? (
+      <MatchDetailScreen match={selectedMatch} onBack={() => navigate('live')} onPlayStream={openPlayer} />
+    ) : screen === 'home' ? (
+      <HomeScreen onMatch={openMatch} />
+    ) : screen === 'live' ? (
+      <LiveScreen onMatch={openMatch} />
+    ) : screen === 'competitions' ? (
+      <CompetitionsScreen onMatch={openMatch} />
+    ) : screen === 'teams' ? (
+      <TeamsScreen onMatch={openMatch} />
+    ) : screen === 'search' ? (
+      <SearchScreen onMatch={openMatch} />
+    ) : (
+      <SettingsScreen />
+    )
+
+  if (uiMode === 'desktop') {
+    return (
+      <div className={`desktop-shell${screen === 'player' ? ' desktop-player-mode' : ''}`}>
+        {screen === 'player' ? null : <DesktopTopbar screen={screen} onNav={navigate} />}
+        <main className="desktop-main">{appContent}</main>
+        {toast ? <div className="toast">▸ {toast}</div> : null}
+      </div>
+    )
+  }
+
+  return (
+    <div className={`app-shell${sidebarExpanded ? ' expanded' : ''}${screen === 'player' ? ' player-mode' : ''}`}>
+      {screen === 'player' ? null : <Sidebar screen={screen} expanded={sidebarExpanded} onNav={navigate} />}
+
+      <main className={`mc-wrap${sidebarExpanded ? ' ex' : ''}`} onClick={() => sidebarExpanded && setSidebarExpanded(false)}>
+        {appContent}
+      </main>
+
+      {screen === 'player' ? null : (
+        <div className="kbbar">
+          {[
+            ['← →', 'Sidebar'],
+            ['1-6', 'Quick Nav'],
+            ['Esc', 'Back'],
+          ].map(([keyLabel, text]) => (
+            <div key={keyLabel} className="kbh">
+              <span className="kbk">{keyLabel}</span>
+              <span>{text}</span>
+            </div>
+          ))}
+
+          <div className="kbbar-brand">
+            <span>KICKOFF TV</span>
+            <span className="kbbar-dot">●</span>
+            <span>TheSportsDB</span>
+          </div>
+        </div>
+      )}
+
+      {toast ? <div className="toast">▸ {toast}</div> : null}
+    </div>
+  )
+}
+
+export default App

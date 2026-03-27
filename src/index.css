@@ -1,0 +1,101 @@
+@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@300;400;600;700;800;900&family=Barlow:wght@300;400;500;600&family=Rajdhani:wght@500;600;700&display=swap');
+
+:root {
+  --bg0: #050810;
+  --bg1: #090d1a;
+  --bg2: #0e1424;
+  --bg3: #131b2e;
+  --card: #111827;
+  --glass: rgba(255, 255, 255, 0.04);
+  --glassh: rgba(255, 255, 255, 0.07);
+  --c1: #00e5ff;
+  --c2: #ff3d71;
+  --c3: #ffd600;
+  --c4: #00e676;
+  --t1: #eef2ff;
+  --t2: #8c98b5;
+  --t3: #41506b;
+  --b1: rgba(255, 255, 255, 0.07);
+  --b2: rgba(255, 255, 255, 0.15);
+  --glow1: 0 0 18px rgba(0, 229, 255, 0.42), 0 0 55px rgba(0, 229, 255, 0.14);
+  --glow2: 0 0 18px rgba(255, 61, 113, 0.42), 0 0 55px rgba(255, 61, 113, 0.14);
+  --r1: 0.4rem;
+  --r2: 0.8rem;
+  --r3: 1.15rem;
+  --r4: 1.5rem;
+  --fd: 'Barlow Condensed', sans-serif;
+  --fb: 'Barlow', sans-serif;
+  --fa: 'Rajdhani', sans-serif;
+  --ease: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  color: var(--t1);
+  background: var(--bg0);
+  font-family: var(--fb);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top left, rgba(0, 229, 255, 0.11), transparent 28%),
+    radial-gradient(circle at top right, rgba(255, 61, 113, 0.08), transparent 24%),
+    linear-gradient(180deg, #050810 0%, #080d18 100%);
+  color: var(--t1);
+  overflow: hidden;
+}
+
+body.desktop-mode {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
+  background-size: 24px 24px;
+  mask-image: radial-gradient(circle at center, black 45%, transparent 88%);
+}
+
+button,
+input,
+table {
+  font: inherit;
+}
+
+button {
+  appearance: none;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+}
+
+a {
+  color: inherit;
+}
+
+#root {
+  position: relative;
+  min-height: 100vh;
+}
