@@ -8,9 +8,12 @@
     "dev:client": "vite",
     "dev:server": "node server.mjs",
     "build": "tsc -b && vite build",
+    "build:webos": "tsc -b && vite build --minify=false --target=es2017",
     "lint": "eslint .",
     "preview": "vite preview",
-    "start": "node server.mjs"
+    "start": "node server.mjs",
+    "prepare:webos": "node scripts/prepare-webos.mjs",
+    "package:webos": "npm run build:webos && npm run prepare:webos && ares-package ./dist-webos"
   },
   "dependencies": {
     "dotenv": "^17.2.3",

@@ -1,0 +1,12 @@
+{
+  "id": "com.retrocodes.kickofftv",
+  "version": "0.1.0",
+  "vendor": "RetroCodes",
+  "type": "web",
+  "title": "KICKOFF TV",
+  "main": "index.html",
+  "icon": "favicon.svg",
+  "largeIcon": "favicon.svg",
+  "requiredMemory": 128,
+  "disableBackHistoryAPI": true
+}

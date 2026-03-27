@@ -9,8 +9,10 @@ lerna-debug.log*
 
 node_modules
 dist
+dist-webos
 dist-ssr
 *.local
+*.ipk
 
 # Editor directories and files
 .vscode/*

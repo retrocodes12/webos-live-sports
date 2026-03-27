@@ -8,7 +8,18 @@ import {
 } from 'react'
 import './App.css'
 
-const API_BASE = '/api/sportsdb'
+const RAW_SPORTZX_API_BASE = String(import.meta.env.VITE_SPORTS_API_BASE_URL ?? '')
+  .trim()
+  .replace(/\/+$/, '')
+const RAW_SPORTSDB_API_BASE = String(import.meta.env.VITE_SPORTSDB_BASE_URL ?? '')
+  .trim()
+  .replace(/\/+$/, '')
+const USE_REMOTE_TV_API =
+  Boolean(RAW_SPORTZX_API_BASE) && !/^https?:\/\/(?:localhost|127(?:\.\d+){3})(?::\d+)?$/i.test(RAW_SPORTZX_API_BASE)
+const SPORTZX_API_BASE = USE_REMOTE_TV_API ? RAW_SPORTZX_API_BASE : ''
+const SPORTSDB_API_BASE = USE_REMOTE_TV_API
+  ? RAW_SPORTSDB_API_BASE || 'https://www.thesportsdb.com/api/v1/json/123'
+  : '/api/sportsdb'
 
 type ScreenId =
   | 'home'
@@ -40,6 +51,35 @@ type SportzxSport = {
   short: string
   flag: string
   count: number
+}
+
+type SportzxCatalogSport = {
+  id?: string
+  name?: string
+  accent?: string
+  shortLabel?: string
+}
+
+type SportzxCatalogMatch = {
+  id?: string | number
+  sportId?: string
+  sportName?: string
+  league?: string
+  round?: string
+  venue?: string
+  status?: string
+  homeTeam?: string
+  awayTeam?: string
+  homeLogoUrl?: string | null
+  awayLogoUrl?: string | null
+  resolverQuery?: {
+    pageUrl?: string
+  } | null
+}
+
+type SportzxCatalog = {
+  sports?: SportzxCatalogSport[]
+  matches?: SportzxCatalogMatch[]
 }
 
 type NavItem = {
@@ -203,12 +243,269 @@ function getCurrentSeason(date = new Date()) {
 
 const SEASON = getCurrentSeason()
 
+let sportzxCatalogPromise: Promise<SportzxCatalog> | null = null
+
 async function apiFetch<T>(path: string) {
-  const response = await fetch(`${API_BASE}/${path}`)
+  const response = await fetch(`${SPORTSDB_API_BASE}/${path}`)
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`)
   }
   return (await response.json()) as T
+}
+
+function normalizeName(value?: string | null) {
+  return String(value ?? '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\b(fc|cf|afc|sc|ac|club|deportivo|football|team|women|men|u\d{2})\b/g, ' ')
+    .replace(/wanderers/g, '')
+    .replace(/united/g, '')
+    .replace(/city/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+}
+
+function tokenizeName(value?: string | null) {
+  return normalizeName(value)
+    .split(' ')
+    .filter(Boolean)
+}
+
+function overlapScore(left?: string | null, right?: string | null) {
+  const leftTokens = tokenizeName(left)
+  const rightTokens = new Set(tokenizeName(right))
+  if (!leftTokens.length || !rightTokens.size) {
+    return 0
+  }
+
+  let score = 0
+  for (const token of leftTokens) {
+    if (rightTokens.has(token)) {
+      score += 1
+    }
+  }
+  return score
+}
+
+function normalizeLeague(value?: string | null) {
+  return normalizeName(value)
+}
+
+function titleizeSport(value?: string | null) {
+  return String(value ?? '')
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(' ')
+}
+
+function inferStreamKind(url?: string | null): StreamOption['kind'] {
+  const lower = String(url ?? '').toLowerCase()
+  if (lower.includes('.m3u8')) {
+    return 'hls'
+  }
+  if (lower.includes('.mpd')) {
+    return 'dash'
+  }
+  if (/\.(mp4|m4v)(\?|$)/i.test(lower)) {
+    return 'mp4'
+  }
+  return 'embed'
+}
+
+function normalizeStreamOption(stream: Partial<StreamOption> | null | undefined, fallbackId: string): StreamOption {
+  return {
+    id: String(stream?.id ?? fallbackId),
+    label: String(stream?.label ?? stream?.provider ?? 'Source'),
+    provider: String(stream?.provider ?? 'Unknown'),
+    quality: String(stream?.quality ?? 'Auto'),
+    language: String(stream?.language ?? 'English'),
+    kind:
+      stream?.kind === 'hls' || stream?.kind === 'dash' || stream?.kind === 'mp4' || stream?.kind === 'embed'
+        ? stream.kind
+        : inferStreamKind(stream?.url),
+    url: String(stream?.url ?? ''),
+    authorized: stream?.authorized !== false,
+    drm: Boolean(stream?.drm),
+    notes: typeof stream?.notes === 'string' ? stream.notes : '',
+    headers:
+      stream?.headers && typeof stream.headers === 'object'
+        ? Object.fromEntries(Object.entries(stream.headers).map(([key, value]) => [key, String(value)]))
+        : {},
+  }
+}
+
+function mapSportzxCatalogMatch(match: SportzxCatalogMatch): Match {
+  const today = new Date().toISOString().slice(0, 10)
+
+  return {
+    idEvent: undefined,
+    streamLookupId: String(match.id ?? ''),
+    streamSource: 'sportzx',
+    intRound: match.round ?? null,
+    strLeague: match.league ?? match.sportName ?? titleizeSport(match.sportId),
+    strSeason: SEASON,
+    strHomeTeam: match.homeTeam ?? 'Home',
+    strAwayTeam: match.awayTeam ?? 'Away',
+    strHomeTeamBadge: match.homeLogoUrl ?? null,
+    strAwayTeamBadge: match.awayLogoUrl ?? null,
+    intHomeScore: null,
+    intAwayScore: null,
+    strStatus: match.status === 'live' ? 'LIVE' : match.status === 'ended' ? 'FT' : '',
+    strProgress: null,
+    strTime: null,
+    dateEvent: today,
+    strVenue: match.venue ?? 'Venue pending',
+    strProvider: 'SportZX',
+  }
+}
+
+function findSportzxCatalogMatch(catalog: SportzxCatalog, match: Match) {
+  const targetLeague = normalizeLeague(match.strLeague)
+  const candidates = Array.isArray(catalog.matches) ? catalog.matches : []
+
+  const ranked = candidates
+    .map((candidate) => {
+      const homeScore = overlapScore(match.strHomeTeam, candidate.homeTeam)
+      const awayScore = overlapScore(match.strAwayTeam, candidate.awayTeam)
+      const reverseHomeScore = overlapScore(match.strHomeTeam, candidate.awayTeam)
+      const reverseAwayScore = overlapScore(match.strAwayTeam, candidate.homeTeam)
+      const bestPairScore = Math.max(homeScore + awayScore, reverseHomeScore + reverseAwayScore)
+      const leagueScore = targetLeague && normalizeLeague(candidate.league) === targetLeague ? 2 : 0
+      const liveScore = candidate.status === 'live' ? 1 : 0
+
+      return {
+        candidate,
+        score: bestPairScore * 10 + leagueScore + liveScore,
+      }
+    })
+    .sort((left, right) => right.score - left.score)
+
+  return ranked[0]?.score >= 20 ? ranked[0].candidate : null
+}
+
+async function fetchSportzxCatalog(): Promise<SportzxCatalog> {
+  if (!USE_REMOTE_TV_API) {
+    throw new Error('Direct SportZX catalog is only used in remote TV mode.')
+  }
+
+  if (!sportzxCatalogPromise) {
+    sportzxCatalogPromise = fetch(`${SPORTZX_API_BASE}/catalog`).then(async (response) => {
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`)
+      }
+      return (await response.json()) as SportzxCatalog
+    })
+  }
+
+  return sportzxCatalogPromise
+}
+
+async function fetchSportzxSports(): Promise<SportzxSport[]> {
+  if (!USE_REMOTE_TV_API) {
+    const response = await fetch('/api/sportzx/sports')
+    if (!response.ok) {
+      return []
+    }
+    const payload = (await response.json()) as { sports?: SportzxSport[] }
+    return Array.isArray(payload.sports) ? payload.sports : []
+  }
+
+  const catalog = await fetchSportzxCatalog()
+  const matches = Array.isArray(catalog.matches) ? catalog.matches : []
+  const counts = new Map<string, number>()
+
+  for (const match of matches) {
+    const sportId = String(match.sportId ?? '').trim()
+    if (!sportId || sportId === 'all') {
+      continue
+    }
+    counts.set(sportId, (counts.get(sportId) ?? 0) + 1)
+  }
+
+  return (Array.isArray(catalog.sports) ? catalog.sports : [])
+    .filter((sport) => sport.id && sport.id !== 'all')
+    .map((sport) => ({
+      id: String(sport.id),
+      name: String(sport.name ?? titleizeSport(sport.id)),
+      short: String(sport.shortLabel ?? titleizeSport(sport.id).slice(0, 3).toUpperCase()),
+      flag: '✦',
+      count: counts.get(String(sport.id)) ?? 0,
+    }))
+}
+
+async function fetchSportzxMatches(sportIds: string[]): Promise<Match[]> {
+  if (!sportIds.length) {
+    return []
+  }
+
+  if (!USE_REMOTE_TV_API) {
+    const responses = await Promise.all(
+      sportIds.map((sportId) =>
+        fetch(`/api/sportzx/matches?sportId=${encodeURIComponent(sportId)}`)
+          .then((response) =>
+            response.ok ? (response.json() as Promise<{ matches?: Match[] }>) : Promise.resolve({ matches: [] }),
+          )
+          .catch(() => ({ matches: [] })),
+      ),
+    )
+
+    return responses.flatMap((payload) => (Array.isArray(payload.matches) ? payload.matches : []))
+  }
+
+  const catalog = await fetchSportzxCatalog()
+  const matches = (Array.isArray(catalog.matches) ? catalog.matches : [])
+    .filter((match) => sportIds.includes(String(match.sportId ?? '')))
+    .map((match) => mapSportzxCatalogMatch(match))
+
+  return matches
+}
+
+async function fetchStreamLookup(match: Match): Promise<MatchStreams> {
+  if (!USE_REMOTE_TV_API) {
+    const lookupQuery = match.streamLookupId
+      ? `matchId=${encodeURIComponent(match.streamLookupId)}`
+      : `idEvent=${encodeURIComponent(match.idEvent ?? '')}`
+    const response = await fetch(`/api/streams?${lookupQuery}`)
+    const text = await response.text()
+    const payload = text ? (JSON.parse(text) as MatchStreams | { error?: string }) : { streams: [] }
+
+    if (!response.ok) {
+      throw new Error('error' in payload && payload.error ? payload.error : `HTTP ${response.status}`)
+    }
+
+    return 'streams' in payload ? payload : { streams: [] }
+  }
+
+  let remoteMatchId = match.streamLookupId ?? ''
+  if (!remoteMatchId && match.idEvent) {
+    const catalog = await fetchSportzxCatalog()
+    const matched = findSportzxCatalogMatch(catalog, match)
+    remoteMatchId = String(matched?.id ?? '')
+  }
+
+  if (!remoteMatchId) {
+    return {
+      streams: [],
+      pending: false,
+      message: 'No matching stream entry was found for this fixture yet.',
+    }
+  }
+
+  const response = await fetch(`${SPORTZX_API_BASE}/matches/${encodeURIComponent(remoteMatchId)}/streams`)
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`)
+  }
+
+  const payload = ((await response.json()) ?? {}) as { streams?: Partial<StreamOption>[] } | Partial<StreamOption>[]
+  const rawStreams = Array.isArray(payload) ? payload : Array.isArray(payload.streams) ? payload.streams : []
+
+  return {
+    streams: rawStreams.map((stream, index) => normalizeStreamOption(stream, `${remoteMatchId}:${index}`)),
+    pending: false,
+    message: 'Authorized sources from the backend.',
+  }
 }
 
 function useApi<T>(factory: () => Promise<T>, deps: DependencyList) {
@@ -1034,16 +1331,7 @@ function LiveScreen({ onMatch }: { onMatch: (match: Match) => void }) {
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const { data: sportzxSports } = useApi(
-    () =>
-      fetch('/api/sportzx/sports')
-        .then((response) =>
-          response.ok ? ((response.json() as Promise<{ sports?: SportzxSport[] }>)) : { sports: [] },
-        )
-        .then((payload) => (Array.isArray(payload.sports) ? payload.sports : []))
-        .catch(() => []),
-    [],
-  )
+  const { data: sportzxSports } = useApi(() => fetchSportzxSports().catch(() => []), [])
 
   const liveFeeds = useMemo<LiveFeed[]>(
     () => [
@@ -1113,20 +1401,6 @@ function LiveScreen({ onMatch }: { onMatch: (match: Match) => void }) {
       }
     }
 
-    async function loadSportzxMatches(sportIds: string[]) {
-      const responses = await Promise.all(
-        sportIds.map((sportId) =>
-          fetch(`/api/sportzx/matches?sportId=${encodeURIComponent(sportId)}`)
-            .then((response) =>
-              response.ok ? ((response.json() as Promise<{ matches?: Match[] }>)) : { matches: [] },
-            )
-            .catch(() => ({ matches: [] })),
-        ),
-      )
-
-      return responses.flatMap((payload) => (Array.isArray(payload.matches) ? payload.matches : []))
-    }
-
     async function loadLeagueMatches() {
       setLoading(true)
       setError(null)
@@ -1145,7 +1419,7 @@ function LiveScreen({ onMatch }: { onMatch: (match: Match) => void }) {
         }
 
         if (selectedFeed.source === 'sportzx') {
-          const matches = await loadSportzxMatches(selectedFeed.sportzxIds ?? [])
+          const matches = await fetchSportzxMatches(selectedFeed.sportzxIds ?? [])
 
           if (!alive) {
             return
@@ -1161,7 +1435,7 @@ function LiveScreen({ onMatch }: { onMatch: (match: Match) => void }) {
         const sportsdbData = await loadSportsDbLeagueMatches(selectedFeed.sportsdbLeagueId ?? '')
         const sportzxMatches =
           selectedFeed.source === 'mixed'
-            ? await loadSportzxMatches(selectedFeed.sportzxIds ?? [])
+            ? await fetchSportzxMatches(selectedFeed.sportzxIds ?? [])
             : []
         const mergedMatches = [...sportsdbData.matches, ...sportzxMatches].sort((a, b) =>
           matchTimeValue(a).localeCompare(matchTimeValue(b)),
@@ -1344,23 +1618,7 @@ function MatchDetailScreen({
     data: streamData,
     loading: streamsLoading,
     error: streamsError,
-  } = useApi(
-    async () => {
-      const lookupQuery = match.streamLookupId
-        ? `matchId=${encodeURIComponent(match.streamLookupId)}`
-        : `idEvent=${encodeURIComponent(match.idEvent ?? '')}`
-      const response = await fetch(`/api/streams?${lookupQuery}`)
-      const text = await response.text()
-      const payload = text ? (JSON.parse(text) as MatchStreams | { error?: string }) : { streams: [] }
-
-      if (!response.ok) {
-        throw new Error('error' in payload && payload.error ? payload.error : `HTTP ${response.status}`)
-      }
-
-      return 'streams' in payload ? payload : { streams: [] }
-    },
-    [match.idEvent, match.streamLookupId, streamRefreshKey],
-  )
+  } = useApi(() => fetchStreamLookup(match), [match.idEvent, match.streamLookupId, streamRefreshKey])
 
   const selectedMatch = eventData ?? match
   const providerOptions = useMemo(() => {
@@ -1682,6 +1940,13 @@ function CompetitionsScreen({ onMatch }: { onMatch: (match: Match) => void }) {
 
   const { data: table, loading, error } = useApi(
     async () => {
+      if (USE_REMOTE_TV_API) {
+        const payload = await apiFetch<{ table?: StandingRow[] | null }>(
+          `lookuptable.php?l=${encodeURIComponent(selectedLeague.id)}&s=${encodeURIComponent(SEASON)}`,
+        )
+        return payload.table ?? []
+      }
+
       const response = await fetch('/api/standings', {
         method: 'POST',
         headers: {
