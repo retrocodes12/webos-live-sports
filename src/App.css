@@ -37,18 +37,11 @@
 }
 
 .desktop-brand-mark {
-  display: grid;
-  place-items: center;
   width: 3rem;
   height: 3rem;
-  border-radius: 1rem;
-  background: linear-gradient(135deg, rgba(0, 229, 255, 0.18), rgba(255, 61, 113, 0.12));
-  border: 1px solid rgba(0, 229, 255, 0.25);
-  font-family: var(--fd);
-  font-size: 1rem;
-  font-weight: 900;
-  letter-spacing: 0.08rem;
-  color: var(--t1);
+  object-fit: contain;
+  flex-shrink: 0;
+  filter: drop-shadow(0 0 14px rgba(0, 229, 255, 0.22));
 }
 
 .desktop-brand-title {
@@ -192,10 +185,11 @@
 }
 
 .logo-icon {
-  width: 2.25rem;
-  height: 2.25rem;
+  width: 2.6rem;
+  height: 2.6rem;
   flex-shrink: 0;
-  filter: drop-shadow(0 0 8px rgba(0, 229, 255, 0.45));
+  object-fit: contain;
+  filter: drop-shadow(0 0 10px rgba(0, 229, 255, 0.28));
 }
 
 .ni {

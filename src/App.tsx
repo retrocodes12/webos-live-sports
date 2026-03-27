@@ -20,6 +20,7 @@ const SPORTZX_API_BASE = USE_REMOTE_TV_API ? RAW_SPORTZX_API_BASE : ''
 const SPORTSDB_API_BASE = USE_REMOTE_TV_API
   ? RAW_SPORTSDB_API_BASE || 'https://www.thesportsdb.com/api/v1/json/123'
   : '/api/sportsdb'
+const BRAND_LOGO_SRC = `${import.meta.env.BASE_URL}kickoff-logo.svg`
 
 type ScreenId =
   | 'home'
@@ -1066,17 +1067,7 @@ function Sidebar({
   return (
     <aside className={`sb${expanded ? ' ex' : ''}`}>
       <div className="logo">
-        <svg className="logo-icon" viewBox="0 0 36 36" fill="none" aria-hidden="true">
-          <circle cx="18" cy="18" r="16" stroke="#00e5ff" strokeWidth="2" />
-          <path
-            d="M18 5 L21 13 L29 13 L23 19 L25 27 L18 22 L11 27 L13 19 L7 13 L15 13 Z"
-            fill="rgba(0,229,255,0.18)"
-            stroke="#00e5ff"
-            strokeWidth="1.3"
-            strokeLinejoin="round"
-          />
-          <circle cx="18" cy="18" r="3.5" fill="#00e5ff" opacity="0.9" />
-        </svg>
+        <img className="logo-icon" src={BRAND_LOGO_SRC} alt="KICKOFF TV" />
         {expanded ? (
           <span>
             KICK<span>OFF</span>
@@ -1112,7 +1103,7 @@ function DesktopTopbar({
   return (
     <header className="desktop-topbar">
       <div className="desktop-brand">
-        <div className="desktop-brand-mark">KO</div>
+        <img className="desktop-brand-mark" src={BRAND_LOGO_SRC} alt="KICKOFF TV" />
         <div>
           <div className="desktop-brand-title">KICKOFF Control</div>
           <div className="desktop-brand-subtitle">Desktop Testing Shell</div>
