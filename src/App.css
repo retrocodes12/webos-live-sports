@@ -1091,6 +1091,8 @@
 
 .player-screen {
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
   padding: 1.5rem;
   background:
     radial-gradient(circle at top left, rgba(0, 229, 255, 0.12), transparent 32%),
@@ -1191,11 +1193,18 @@
 }
 
 .player-stage-wrap {
+  flex: 1;
+  display: flex;
+  min-height: 0;
   max-width: 86rem;
   margin: 0 auto;
+  width: 100%;
 }
 
 .player-stage-wrap .stream-player-shell {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
   margin-bottom: 0;
   padding: 1.1rem;
   border-radius: var(--r4);
@@ -1204,6 +1213,29 @@
 
 .player-stage-wrap .stream-player-stage {
   min-height: 0;
+  aspect-ratio: auto;
+}
+
+.app-shell.player-mode .player-screen {
+  padding: 1rem 1.25rem 1.25rem;
+}
+
+.app-shell.player-mode .player-topbar {
+  margin-bottom: 0.8rem;
+}
+
+.app-shell.player-mode .player-stage-wrap {
+  max-width: none;
+}
+
+.app-shell.player-mode .player-stage-wrap .stream-player-shell {
+  padding: 0.8rem;
+}
+
+.app-shell.player-mode .player-stage-wrap .stream-player-stage {
+  flex: 1;
+  min-height: calc(100vh - 12.2rem);
+  height: calc(100vh - 12.2rem);
   aspect-ratio: auto;
 }
 
@@ -1245,7 +1277,12 @@
 
 .stream-player-stage {
   position: relative;
+  flex: 1;
+  min-height: 16rem;
   overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border-radius: calc(var(--r3) + 0.1rem);
   background: #040812;
   border: 1px solid rgba(255, 255, 255, 0.06);
@@ -1261,13 +1298,48 @@
   background: #000;
 }
 
+.stream-player-frame-adjustable {
+  transform: translate(var(--embed-offset-x, 0%), var(--embed-offset-y, 0%)) scale(var(--embed-scale, 1));
+  transform-origin: center center;
+  will-change: transform;
+}
+
 .stream-player-loading {
   position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  color: var(--t2);
-  background: rgba(3, 10, 20, 0.7);
+  top: 1rem;
+  right: 1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.5rem;
+  padding: 0.55rem 0.9rem;
+  border-radius: 999px;
+  color: var(--t1);
+  background: rgba(3, 10, 20, 0.86);
+  border: 1px solid rgba(0, 229, 255, 0.18);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.03), 0 12px 30px rgba(0, 0, 0, 0.28);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.stream-player-hud {
+  position: absolute;
+  left: 1rem;
+  bottom: 1rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 0.8rem;
+  border-radius: 999px;
+  background: rgba(3, 10, 20, 0.88);
+  border: 1px solid rgba(0, 229, 255, 0.18);
+  color: var(--t1);
+  font-family: var(--fa);
+  font-size: 0.68rem;
+  letter-spacing: 0.08rem;
+  text-transform: uppercase;
+  z-index: 2;
+  pointer-events: none;
 }
 
 .stream-note {
@@ -2350,6 +2422,7 @@
 .desktop-shell .player-stage-wrap .stream-player-stage {
   aspect-ratio: 16 / 9;
   max-height: 70vh;
+  height: auto;
 }
 
 .desktop-shell .toast {

@@ -3,6 +3,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type DependencyList,
   type RefObject,
   type ReactNode,
@@ -178,6 +179,12 @@ type MatchStreams = {
   streams: StreamOption[]
   pending?: boolean
   message?: string
+}
+
+type EmbedViewport = {
+  scale: number
+  offsetX: number
+  offsetY: number
 }
 
 type PlayerLaunchPayload = {
@@ -695,6 +702,108 @@ function formatSourceHost(value?: string | null) {
   return candidate || 'Unknown host'
 }
 
+const DEFAULT_EMBED_VIEWPORT: EmbedViewport = {
+  scale: 1,
+  offsetX: 0,
+  offsetY: 0,
+}
+
+function clampNumber(value: number, minimum: number, maximum: number) {
+  return Math.max(minimum, Math.min(maximum, value))
+}
+
+function getEmbedViewportPreset(stream?: StreamOption | null): EmbedViewport {
+  if (!stream || stream.kind !== 'embed') {
+    return DEFAULT_EMBED_VIEWPORT
+  }
+
+  const host = formatSourceHost(stream.url || stream.provider).toLowerCase()
+  if (
+    host.includes('24hours.top') ||
+    host.includes('getstream.live') ||
+    host.includes('stream-home.shop') ||
+    host.includes('streamin.info')
+  ) {
+    return {
+      scale: 7.2,
+      offsetX: 0,
+      offsetY: -8,
+    }
+  }
+
+  if (
+    host.includes('w2.sportzsonline.click') ||
+    host.includes('w3.sportzsonline.click') ||
+    host.includes('w4.sportzsonline.click') ||
+    host.includes('sportzsonline.click') ||
+    host.includes('streams.center')
+  ) {
+    return {
+      scale: 5.8,
+      offsetX: 0,
+      offsetY: -6,
+    }
+  }
+
+  if (
+    host.includes('1ststreams.shop') ||
+    host.includes('4kstreamz.shop') ||
+    host.includes('topstreamsz.shop') ||
+    host.includes('embedhd.org') ||
+    host.includes('papashd.') ||
+    host.includes('streams.center')
+  ) {
+    return {
+      scale: 4.4,
+      offsetX: 0,
+      offsetY: -4,
+    }
+  }
+
+  return DEFAULT_EMBED_VIEWPORT
+}
+
+function getStreamPriority(stream: StreamOption) {
+  const host = formatSourceHost(stream.url || stream.provider).toLowerCase()
+
+  if (
+    host.includes('streams.center') ||
+    host.includes('sportzsonline.click') ||
+    host.includes('1ststreams.shop') ||
+    host.includes('4kstreamz.shop') ||
+    host.includes('topstreamsz.shop') ||
+    host.includes('embedhd.org')
+  ) {
+    return 10
+  }
+
+  if (host.includes('totalsportek.army')) {
+    return 200
+  }
+
+  if (
+    host.includes('24hours.top') ||
+    host.includes('getstream.live') ||
+    host.includes('stream-home.shop') ||
+    host.includes('streamin.info')
+  ) {
+    return 150
+  }
+
+  return 80
+}
+
+function sortStreamsForPlayback(streams: StreamOption[]) {
+  return [...streams].sort((left, right) => {
+    const priorityDelta = getStreamPriority(left) - getStreamPriority(right)
+    if (priorityDelta !== 0) {
+      return priorityDelta
+    }
+
+    return formatSourceHost(left.url || left.provider).localeCompare(formatSourceHost(right.url || right.provider))
+  })
+}
+
 function buildStreamBadge(provider?: string | null) {
   const label = formatProviderLabel(provider).replace(/[^A-Za-z0-9]/g, '')
   return label.slice(0, 2).toUpperCase() || 'ST'
@@ -989,9 +1098,23 @@ function MatchCard({
   )
 }
 
-function EmbedStreamFrame({ stream }: { stream: StreamOption }) {
+function EmbedStreamFrame({
+  stream,
+  viewport,
+  showHud,
+}: {
+  stream: StreamOption
+  viewport?: EmbedViewport
+  showHud?: boolean
+}) {
   const [embedLoaded, setEmbedLoaded] = useState(false)
   const [embedError, setEmbedError] = useState('')
+  const activeViewport = viewport ?? getEmbedViewportPreset(stream)
+  const frameStyle = {
+    '--embed-scale': String(activeViewport.scale),
+    '--embed-offset-x': `${activeViewport.offsetX}%`,
+    '--embed-offset-y': `${activeViewport.offsetY}%`,
+  } as CSSProperties
 
   return (
     <div className="stream-player-shell">
@@ -1000,8 +1123,16 @@ function EmbedStreamFrame({ stream }: { stream: StreamOption }) {
       </div>
       {embedError ? <div className="stream-player-error">{embedError}</div> : null}
       <div className="stream-player-stage">
+        {showHud ? (
+          <div className="stream-player-hud">
+            <span>Zoom {activeViewport.scale.toFixed(1)}x</span>
+            <span>Pan {activeViewport.offsetX > 0 ? '+' : ''}{activeViewport.offsetX}%</span>
+            <span>0 Reset</span>
+          </div>
+        ) : null}
         <iframe
-          className="stream-player-frame"
+          className={`stream-player-frame${activeViewport.scale > 1.02 ? ' stream-player-frame-adjustable' : ''}`}
+          style={frameStyle}
           src={stream.url}
           title={`${stream.provider} ${stream.label}`}
           allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
@@ -1024,7 +1155,15 @@ function EmbedStreamFrame({ stream }: { stream: StreamOption }) {
   )
 }
 
-function StreamPlayer({ stream }: { stream: StreamOption | null }) {
+function StreamPlayer({
+  stream,
+  viewport,
+  showHud = false,
+}: {
+  stream: StreamOption | null
+  viewport?: EmbedViewport
+  showHud?: boolean
+}) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
 
   useEffect(() => {
@@ -1057,7 +1196,7 @@ function StreamPlayer({ stream }: { stream: StreamOption | null }) {
   }
 
   if (stream.kind === 'embed') {
-    return <EmbedStreamFrame key={stream.id} stream={stream} />
+    return <EmbedStreamFrame key={stream.id} stream={stream} viewport={viewport} showHud={showHud} />
   }
 
   return (
@@ -1083,9 +1222,13 @@ function StreamPlayer({ stream }: { stream: StreamOption | null }) {
 function PlayerScreen({
   payload,
   onBack,
+  uiMode,
+  viewport,
 }: {
   payload: PlayerLaunchPayload | null
   onBack: () => void
+  uiMode: UIMode
+  viewport: EmbedViewport
 }) {
   useEffect(() => {
     document.title = payload ? `${payload.matchTitle} | KICKOFF Player` : 'KICKOFF Player'
@@ -1132,7 +1275,7 @@ function PlayerScreen({
       </div>
 
       <div className="player-stage-wrap">
-        <StreamPlayer stream={payload.stream} />
+        <StreamPlayer stream={payload.stream} viewport={viewport} showHud={uiMode === 'tv' && payload.stream.kind === 'embed'} />
       </div>
     </div>
   )
@@ -1698,12 +1841,12 @@ function MatchDetailScreen({
 
   const selectedMatch = eventData ?? match
   const providerOptions = useMemo(() => {
-    const streamEntries = Array.isArray(streamData?.streams) ? streamData.streams : []
+    const streamEntries = sortStreamsForPlayback(Array.isArray(streamData?.streams) ? streamData.streams : [])
     return [...new Set(streamEntries.map((stream) => formatProviderLabel(stream.provider)))].sort()
   }, [streamData])
   const activeProvider = providerOptions.includes(selectedProvider) ? selectedProvider : 'all'
   const visibleStreams = useMemo(() => {
-    const streamEntries = Array.isArray(streamData?.streams) ? streamData.streams : []
+    const streamEntries = sortStreamsForPlayback(Array.isArray(streamData?.streams) ? streamData.streams : [])
     if (activeProvider === 'all') {
       return streamEntries
     }
@@ -2561,6 +2704,7 @@ function App() {
   const [sidebarExpanded, setSidebarExpanded] = useState(false)
   const [selectedMatch, setSelectedMatch] = useState<Match | null>(null)
   const [playerPayload, setPlayerPayload] = useState<PlayerLaunchPayload | null>(null)
+  const [playerViewport, setPlayerViewport] = useState<EmbedViewport>(DEFAULT_EMBED_VIEWPORT)
   const [toast, setToast] = useState<string | null>(null)
   const sidebarRef = useRef<HTMLElement | null>(null)
   const mainRef = useRef<HTMLElement | null>(null)
@@ -2585,6 +2729,7 @@ function App() {
     setScreen(nextScreen)
     setSelectedMatch(null)
     setPlayerPayload(null)
+    setPlayerViewport(DEFAULT_EMBED_VIEWPORT)
     setSidebarExpanded(false)
     const navItem = NAV_ITEMS.find((item) => item.id === nextScreen)
     setToast(navItem?.label ?? nextScreen)
@@ -2597,6 +2742,7 @@ function App() {
 
   function openPlayer(payload: PlayerLaunchPayload) {
     setPlayerPayload(payload)
+    setPlayerViewport(getEmbedViewportPreset(payload.stream))
     setScreen('player')
   }
 
@@ -2660,6 +2806,7 @@ function App() {
       if (key === 'Escape' || key === 'Backspace' || keyCode === 461) {
         event.preventDefault()
         if (screen === 'player') {
+          setPlayerViewport(DEFAULT_EMBED_VIEWPORT)
           setScreen('detail')
         } else if (screen === 'detail') {
           setScreen('live')
@@ -2668,6 +2815,50 @@ function App() {
           setSidebarExpanded(false)
         }
         return
+      }
+
+      if (screen === 'player' && playerPayload?.stream.kind === 'embed') {
+        if (key === 'ArrowUp' || keyCode === 38) {
+          event.preventDefault()
+          setPlayerViewport((current) => ({
+            ...current,
+            scale: Number(clampNumber(current.scale + 0.35, 1, 9).toFixed(2)),
+          }))
+          return
+        }
+
+        if (key === 'ArrowDown' || keyCode === 40) {
+          event.preventDefault()
+          setPlayerViewport((current) => ({
+            ...current,
+            scale: Number(clampNumber(current.scale - 0.35, 1, 9).toFixed(2)),
+          }))
+          return
+        }
+
+        if (key === 'ArrowLeft' || keyCode === 37) {
+          event.preventDefault()
+          setPlayerViewport((current) => ({
+            ...current,
+            offsetX: Number(clampNumber(current.offsetX - 4, -48, 48).toFixed(1)),
+          }))
+          return
+        }
+
+        if (key === 'ArrowRight' || keyCode === 39) {
+          event.preventDefault()
+          setPlayerViewport((current) => ({
+            ...current,
+            offsetX: Number(clampNumber(current.offsetX + 4, -48, 48).toFixed(1)),
+          }))
+          return
+        }
+
+        if (key === '0' || keyCode === 48 || keyCode === 96) {
+          event.preventDefault()
+          setPlayerViewport(getEmbedViewportPreset(playerPayload.stream))
+          return
+        }
       }
 
       if (key === 'ArrowLeft' || keyCode === 37) {
@@ -2723,7 +2914,7 @@ function App() {
 
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [screen, sidebarExpanded, uiMode])
+  }, [playerPayload?.stream, screen, sidebarExpanded, uiMode])
 
   useEffect(() => {
     if (uiMode !== 'tv') {
@@ -2752,7 +2943,15 @@ function App() {
 
   const appContent =
     screen === 'player' ? (
-      <PlayerScreen payload={playerPayload} onBack={() => setScreen('detail')} />
+      <PlayerScreen
+        payload={playerPayload}
+        onBack={() => {
+          setPlayerViewport(DEFAULT_EMBED_VIEWPORT)
+          setScreen('detail')
+        }}
+        uiMode={uiMode}
+        viewport={playerViewport}
+      />
     ) : screen === 'detail' && selectedMatch ? (
       <MatchDetailScreen match={selectedMatch} onBack={() => navigate('live')} onPlayStream={openPlayer} />
     ) : screen === 'home' ? (
